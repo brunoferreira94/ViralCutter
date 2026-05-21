@@ -33,6 +33,12 @@ try:
 except ImportError:
     HAS_LLAMA_CPP = False
 
+try:
+    from github_copilot_provider import GitHubCopilotProvider
+    HAS_COPILOT = True
+except ImportError:
+    HAS_COPILOT = False
+
 def clean_json_response(response_text):
     """
     Limpa a resposta focando em encontrar o objeto JSON que contém a chave "segments".
@@ -279,6 +285,53 @@ def call_g4f(prompt, model_name="gpt-4o-mini"):
     print(f"Falha crítica após {max_retries} tentativas no G4F.")
     return "{}"
 
+def call_copilot(prompt, github_token, model_name="claude-3-5-sonnet-20241022"):
+    """
+    Call GitHub Copilot API (Claude) for viral segment generation.
+    
+    Args:
+        prompt: System+user prompt for Claude
+        github_token: GitHub personal access token
+        model_name: Claude model ID
+    
+    Returns:
+        str: Raw JSON response from Claude
+    """
+    if not HAS_COPILOT:
+        raise ImportError("O provider do Copilot SDK não está disponível. Verifique scripts/github_copilot_provider.py e a instalação de github-copilot-sdk.")
+    
+    try:
+        provider = GitHubCopilotProvider(
+            github_token=github_token,
+            model=model_name
+        )
+        
+        # For Copilot, we pass the full prompt as both system and user parts
+        # The prompt already contains the system message + transcript
+        # So we treat it as the user message
+        system_prompt = "You are a World-Class Viral Video Editor. Analyze transcripts and find viral segments. Output ONLY valid JSON."
+        
+        response = provider.generate_segments(
+            system_prompt=system_prompt,
+            transcript=prompt,
+            chunk_size=10000
+        )
+        
+        return response
+        
+    except Exception as e:
+        error_str = str(e)
+        print(f"[ERROR] GitHub Copilot API error: {error_str}")
+        
+        if "token invalid" in error_str or "expired" in error_str:
+            print("[ERROR] GitHub token invalid or expired for Copilot SDK.")
+        elif "scope" in error_str or "Forbidden" in error_str:
+            print("[ERROR] GitHub token lacks permissions for Copilot SDK.")
+        elif "rate limited" in error_str or "429" in error_str:
+            print("[ERROR] GitHub Copilot API rate limited. Try again later.")
+        
+        return "{}"
+
 def load_transcript(project_folder):
     """Parses input.tsv or input.srt from the project folder."""
     input_tsv = os.path.join(project_folder, 'input.tsv')
@@ -523,6 +576,11 @@ def create(num_segments, viral_mode, themes, tempo_minimo, tempo_maximo, ai_mode
         "g4f": {
             "model": "gpt-4o-mini",
             "chunk_size": 2000
+        },
+        "copilot": {
+            "github_token": "",
+            "model": "claude-3-5-sonnet-20241022",
+            "chunk_size": 10000
         }
     }
 
@@ -532,6 +590,7 @@ def create(num_segments, viral_mode, themes, tempo_minimo, tempo_maximo, ai_mode
                 loaded_config = json.load(f)
                 if "gemini" in loaded_config: config["gemini"].update(loaded_config["gemini"])
                 if "g4f" in loaded_config: config["g4f"].update(loaded_config["g4f"])
+                if "copilot" in loaded_config: config["copilot"].update(loaded_config["copilot"])
                 if "selected_api" in loaded_config: config["selected_api"] = loaded_config["selected_api"]
         except Exception as e:
             print(f"Erro ao ler api_config.json: {e}")
@@ -552,6 +611,13 @@ def create(num_segments, viral_mode, themes, tempo_minimo, tempo_maximo, ai_mode
         current_chunk_size = chunk_size_arg if chunk_size_arg and int(chunk_size_arg) > 0 else cfg_chunk
         cfg_model = config["g4f"].get("model", "gpt-4o-mini")
         model_name = model_name_arg if model_name_arg else cfg_model
+
+    elif ai_mode == "copilot":
+        cfg_chunk = config["copilot"].get("chunk_size", 10000)
+        current_chunk_size = chunk_size_arg if chunk_size_arg and int(chunk_size_arg) > 0 else cfg_chunk
+        cfg_model = config["copilot"].get("model", "claude-3-5-sonnet-20241022")
+        model_name = model_name_arg if model_name_arg else cfg_model
+        if not api_key: api_key = config["copilot"].get("github_token", "")
 
     elif ai_mode == "local":
         current_chunk_size = chunk_size_arg if chunk_size_arg and int(chunk_size_arg) > 0 else 3000
@@ -697,6 +763,15 @@ OUTPUT JSON ONLY:
             print(f"Failed to load model: {e}")
             return {"segments": []}
 
+    elif ai_mode == "copilot":
+        if not HAS_COPILOT:
+            print("Error: anthropic library not installed. Please install it with: pip install anthropic>=0.28.0")
+            return {"segments": []}
+        
+        if not api_key or not api_key.strip():
+            print("Error: GitHub token required for Copilot mode. Check your api_config.json")
+            return {"segments": []}
+
     for i, prompt in enumerate(output_texts):
         response_text = ""
         manual_prompt_path = os.path.join(project_folder, f"prompt_part_{i+1}.txt")
@@ -745,6 +820,9 @@ OUTPUT JSON ONLY:
         elif ai_mode == "g4f":
             print(f"Enviando chunk {i+1} para o G4F (Model: {model_name})...")
             response_text = call_g4f(prompt, model_name=model_name)
+        elif ai_mode == "copilot":
+            print(f"Enviando chunk {i+1} para o GitHub Copilot (Model: {model_name})...")
+            response_text = call_copilot(prompt, github_token=api_key, model_name=model_name)
         elif ai_mode == "local" and local_llm_instance:
             print(f"Processing chunk {i+1} with Local LLM...")
             try:

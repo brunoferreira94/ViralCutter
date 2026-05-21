@@ -1,0 +1,53 @@
+# Python cache and build artifacts
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+.coverage.*
+htmlcov/
+dist/
+build/
+site/
+
+# Virtual environments
+.venv/
+venv/
+env/
+ENV/
+
+# Notebook artifacts
+.ipynb_checkpoints/
+
+# IDE and OS files
+.vscode/
+.idea/
+*.swp
+*.swo
+Thumbs.db
+.DS_Store
+
+# Project runtime output
+VIRALS/
+temp_subtitle_config.json
+debug_colors.log
+debug_preview.log
+
+# Generated prompt/response debug files
+prompt_full.txt
+prompt_part_*.txt
+response.json
+response_raw_part_*.txt
+
+# Local model artifacts
+models/*.gguf
+
+# Local secrets and overrides
+.env
+.env.*
+!.env.example
+openspec/
+.github/

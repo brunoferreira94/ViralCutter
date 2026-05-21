@@ -1,0 +1,16 @@
+# Core dependencies for lightweight builds (without g4f)
+numpy<2.1.0
+yt-dlp
+ffmpeg-python
+whisperx
+mediapipe
+google-genai
+github-copilot-sdk
+insightface
+gradio
+opencv-python
+psutil
+fastapi
+uvicorn
+deep-translator
+tqdm

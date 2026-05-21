@@ -1,0 +1,68 @@
+name: viralcutter
+
+services:
+  webui:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: viralcutter:cpu
+    profiles: ["webui"]
+    command: ["python", "webui/app.py"]
+    ports:
+      - "7860:7860"
+    volumes:
+      - ./VIRALS:/app/VIRALS
+      - ./models:/app/models
+      - ./api_config.json:/app/api_config.json
+      - ./prompt.txt:/app/prompt.txt
+    environment:
+      - PYTHONUNBUFFERED=1
+
+  cli:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: viralcutter:cpu
+    profiles: ["cli"]
+    entrypoint: ["python", "main_improved.py"]
+    volumes:
+      - ./VIRALS:/app/VIRALS
+      - ./models:/app/models
+      - ./api_config.json:/app/api_config.json
+      - ./prompt.txt:/app/prompt.txt
+    environment:
+      - PYTHONUNBUFFERED=1
+
+  webui-gpu:
+    build:
+      context: .
+      dockerfile: Dockerfile.gpu
+    image: viralcutter:gpu
+    profiles: ["gpu", "webui-gpu"]
+    command: ["python", "webui/app.py"]
+    ports:
+      - "7860:7860"
+    volumes:
+      - ./VIRALS:/app/VIRALS
+      - ./models:/app/models
+      - ./api_config.json:/app/api_config.json
+      - ./prompt.txt:/app/prompt.txt
+    environment:
+      - PYTHONUNBUFFERED=1
+    gpus: all
+
+  cli-gpu:
+    build:
+      context: .
+      dockerfile: Dockerfile.gpu
+    image: viralcutter:gpu
+    profiles: ["gpu", "cli-gpu"]
+    entrypoint: ["python", "main_improved.py"]
+    volumes:
+      - ./VIRALS:/app/VIRALS
+      - ./models:/app/models
+      - ./api_config.json:/app/api_config.json
+      - ./prompt.txt:/app/prompt.txt
+    environment:
+      - PYTHONUNBUFFERED=1
+    gpus: all

@@ -1,0 +1,9 @@
+--extra-index-url https://download.pytorch.org/whl/cpu
+
+# CPU-only runtime pins (avoid CUDA wheels in default image)
+torch==2.5.1+cpu
+torchvision==0.20.1+cpu
+torchaudio==2.5.1+cpu
+onnxruntime==1.20.1
+
+-r requirements.core.txt

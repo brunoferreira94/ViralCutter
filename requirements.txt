@@ -6,6 +6,7 @@ ffmpeg-python
 whisperx
 mediapipe
 google-genai
+anthropic>=0.28.0
 insightface
 gradio
 opencv-python

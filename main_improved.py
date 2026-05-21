@@ -87,6 +87,31 @@ def get_subtitle_config(config_path=None):
     
     return config
 
+
+def load_api_config(config_path=None):
+    if not config_path:
+        config_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'api_config.json')
+    if os.path.exists(config_path):
+        try:
+            with open(config_path, 'r', encoding='utf-8') as f:
+                return json.load(f)
+        except Exception:
+            pass
+    return {}
+
+
+def save_api_config(config, config_path=None):
+    if not config_path:
+        config_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'api_config.json')
+    try:
+        with open(config_path, 'w', encoding='utf-8') as f:
+            json.dump(config, f, indent=4, ensure_ascii=False)
+        return True
+    except Exception as e:
+        print(i18n("Error saving api_config.json: {} ").format(e))
+        return False
+
+
 def interactive_input_int(prompt_text):
     """Solicita um inteiro ao usuário via terminal."""
     while True:
@@ -97,6 +122,15 @@ def interactive_input_int(prompt_text):
             print(i18n("\nError: Number must be greater than 0."))
         except ValueError:
             print(i18n("\nError: The value you entered is not an integer. Please try again."))
+
+
+def get_copilot_env_token():
+    """Return Copilot token from environment by priority."""
+    for env_name in ["COPILOT_GITHUB_TOKEN", "GH_TOKEN", "GITHUB_TOKEN"]:
+        value = os.environ.get(env_name, "").strip()
+        if value:
+            return value, env_name
+    return "", ""
 
 def main():
     # Configuração de Argumentos via Linha de Comando (CLI)
@@ -110,9 +144,9 @@ def main():
     parser.add_argument("--max-duration", type=int, default=90, help="Maximum segment duration (seconds)")
     parser.add_argument("--model", default="large-v3-turbo", help="Whisper model to use")
     
-    parser.add_argument("--ai-backend", choices=["manual", "gemini", "g4f", "local"], help="AI backend for viral analysis")
-    parser.add_argument("--api-key", help="Gemini API Key (required if ai-backend is gemini)")
-    
+    parser.add_argument("--ai-backend", choices=["manual", "gemini", "g4f", "local", "copilot"], help="AI backend for viral analysis")
+    parser.add_argument("--api-key", help="Gemini API Key or GitHub Copilot token")
+    parser.add_argument("--copilot-token", help="GitHub Copilot token (OAuth user token or fine-grained token compatible with Copilot SDK)")
     parser.add_argument("--chunk-size", help="Override Chunk Size")
     parser.add_argument("--ai-model-name", help="Override AI Model Name")
 
@@ -351,18 +385,64 @@ def main():
                     ai_backend = "manual"
 
         api_key = args.api_key
-        # Check config for API Key if using Gemini
+        # Check config for API Key / Copilot Token
         if ai_backend == "gemini" and not api_key:
             cfg_key = api_config.get("gemini", {}).get("api_key", "")
             if cfg_key and cfg_key != "SUA_KEY_AQUI":
                 api_key = cfg_key
-        
+
+        if ai_backend == "copilot":
+            if not api_key and args.copilot_token:
+                api_key = args.copilot_token
+            if not api_key:
+                env_token, env_name = get_copilot_env_token()
+                if env_token:
+                    print(i18n("Using Copilot token from environment variable: {} ").format(env_name))
+                    api_key = env_token
+            if not api_key:
+                cfg_key = api_config.get("copilot", {}).get("github_token", "")
+                if cfg_key:
+                    api_key = cfg_key
+            if not args.ai_model_name:
+                args.ai_model_name = api_config.get("copilot", {}).get("model", "")
+            if not args.chunk_size:
+                args.chunk_size = api_config.get("copilot", {}).get("chunk_size", "")
+
         if ai_backend == "gemini" and not api_key:
              if args.skip_prompts:
                  print(i18n("Gemini API key missing, but skip-prompts is ON. Might fail."))
              else:
                  print(i18n("Gemini API Key not found in api_config.json or arguments."))
                  api_key = input(i18n("Enter your Gemini API Key: ")).strip()
+
+        if ai_backend == "copilot" and not api_key:
+             if args.skip_prompts:
+                 print(i18n("GitHub Copilot token missing (args/env/config), but skip-prompts is ON. Might fail."))
+             else:
+                 api_key = input(i18n("Enter your GitHub Copilot token: ")).strip()
+                 if api_key:
+                     api_config.setdefault("copilot", {})
+                     api_config["copilot"]["github_token"] = api_key
+                     api_config["selected_api"] = "copilot"
+                     if args.ai_model_name:
+                         api_config["copilot"]["model"] = args.ai_model_name
+                     if args.chunk_size:
+                         api_config["copilot"]["chunk_size"] = args.chunk_size
+                     if save_api_config(api_config, config_path):
+                         print(i18n("GitHub Copilot token saved to api_config.json."))
+
+        if ai_backend == "copilot" and api_key:
+             cfg_key = api_config.get("copilot", {}).get("github_token", "")
+             if api_key != cfg_key:
+                 api_config.setdefault("copilot", {})
+                 api_config["copilot"]["github_token"] = api_key
+                 if args.ai_model_name:
+                     api_config["copilot"]["model"] = args.ai_model_name
+                 if args.chunk_size:
+                     api_config["copilot"]["chunk_size"] = args.chunk_size
+                 api_config["selected_api"] = "copilot"
+                 if save_api_config(api_config, config_path):
+                     print(i18n("GitHub Copilot token saved to api_config.json."))
 
     # Workflow & Face Config Inputs
     workflow_choice = args.workflow

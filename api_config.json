@@ -8,5 +8,10 @@
     "g4f": {
         "model": "gpt-4o-mini",
         "chunk_size": 2000
+    },
+    "copilot": {
+        "github_token": "",
+        "model": "claude-3-5-sonnet-20241022",
+        "chunk_size": 10000
     }
 }

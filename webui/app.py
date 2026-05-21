@@ -155,10 +155,118 @@ G4F_MODELS = [
     'qwen-2.5-72b'
 ]
 
+COPILOT_MODELS = [
+    'claude-3-5-sonnet-20241022',
+    'claude-3-opus-20240229',
+    'claude-3-sonnet-20240229',
+    'claude-3-haiku-20240307'
+]
+
 def get_local_models():
     if not os.path.exists(MODELS_DIR): return []
     return [f for f in os.listdir(MODELS_DIR) if f.endswith(".gguf")]
 
+
+def get_api_config_path():
+    return os.path.join(WORKING_DIR, "api_config.json")
+
+
+def load_api_config():
+    config_path = get_api_config_path()
+    if os.path.exists(config_path):
+        try:
+            with open(config_path, 'r', encoding='utf-8') as f:
+                return json.load(f)
+        except Exception:
+            pass
+    return {}
+
+
+def save_api_config(selected_api, api_key, ai_model_name, chunk_size):
+    config_path = get_api_config_path()
+    config = load_api_config()
+    config['selected_api'] = selected_api
+
+    if selected_api == 'gemini':
+        config.setdefault('gemini', {})
+        if api_key:
+            config['gemini']['api_key'] = api_key
+        if ai_model_name:
+            config['gemini']['model'] = ai_model_name
+        if chunk_size:
+            config['gemini']['chunk_size'] = int(chunk_size)
+    elif selected_api == 'copilot':
+        config.setdefault('copilot', {})
+        if api_key:
+            config['copilot']['github_token'] = api_key
+        if ai_model_name:
+            config['copilot']['model'] = ai_model_name
+        if chunk_size:
+            config['copilot']['chunk_size'] = int(chunk_size)
+    elif selected_api == 'g4f':
+        config.setdefault('g4f', {})
+        if ai_model_name:
+            config['g4f']['model'] = ai_model_name
+        if chunk_size:
+            config['g4f']['chunk_size'] = int(chunk_size)
+    elif selected_api == 'local':
+        config.setdefault('local', {})
+        if ai_model_name:
+            config['local']['model'] = ai_model_name
+        if chunk_size:
+            config['local']['chunk_size'] = int(chunk_size)
+
+    try:
+        with open(config_path, 'w', encoding='utf-8') as f:
+            json.dump(config, f, indent=4, ensure_ascii=False)
+        return i18n("Provider configuration saved.")
+    except Exception as e:
+        return i18n("Error saving configuration: {} ").format(e)
+
+
+def mask_secret(secret):
+    if not secret:
+        return ""
+    if len(secret) <= 8:
+        return "*" * len(secret)
+    return f"{secret[:4]}...{secret[-4:]}"
+
+
+def open_github_token_page():
+    return i18n("GitHub token creation page opened in browser.")
+
+
+def start_github_cli_login():
+    if not shutil.which("gh"):
+        return i18n("GitHub CLI not found. Install gh to authenticate automatically.")
+
+    try:
+        if os.name == 'nt':
+            command = 'start "GitHub Copilot Login" cmd /k gh auth login --web'
+            subprocess.Popen(command, shell=True, cwd=WORKING_DIR)
+        else:
+            subprocess.Popen(["gh", "auth", "login", "--web"], cwd=WORKING_DIR)
+        return i18n("GitHub CLI login started in a new terminal window.")
+    except Exception as e:
+        return i18n("Unable to start GitHub CLI login: {} ").format(e)
+
+
+def import_github_cli_token():
+    if not shutil.which("gh"):
+        return i18n("GitHub CLI not found. Install gh to import a token automatically.")
+
+    try:
+        token = subprocess.check_output(["gh", "auth", "token"], stderr=subprocess.STDOUT, text=True).strip()
+        if not token:
+            return i18n("No token found in GitHub CLI. Run gh auth login --web first.")
+
+        status = save_api_config("copilot", token, None, None)
+        return i18n("GitHub token imported from GitHub CLI and saved. {} ").format(mask_secret(token)) if "Provider configuration saved." in status else status
+    except subprocess.CalledProcessError as e:
+        output = e.output.strip() if hasattr(e, 'output') else str(e)
+        return i18n("GitHub CLI error: {} ").format(output)
+    except Exception as e:
+        return i18n("Unexpected error importing GitHub token: {} ").format(e)
 
 
 def apply_face_preset(preset_name):
@@ -240,6 +348,8 @@ def run_viral_cutter(input_source, project_name, url, video_file, segments, vira
     cmd.extend(["--max-duration", str(int(max_duration))])
     cmd.extend(["--model", model])
     cmd.extend(["--ai-backend", ai_backend])
+    if ai_backend in ["gemini", "copilot", "g4f", "local"]:
+        save_api_config(ai_backend, api_key, ai_model_name, chunk_size)
     if api_key: cmd.extend(["--api-key", api_key])
     
     # New AI Params
@@ -426,19 +536,34 @@ with gr.Blocks(title=i18n("ViralCutter WebUI"), theme=gr.themes.Default(primary_
                         max_dur_input = gr.Number(label=i18n("Max Duration (s)"), value=90)
                 with gr.Column(scale=1):
                     with gr.Row():
-                        ai_backend_input = gr.Dropdown(choices=[(i18n("Gemini"), "gemini"), (i18n("G4F"), "g4f"), (i18n("Local (GGUF)"), "local"), (i18n("Manual"), "manual")], label=i18n("AI Backend"), value="gemini", scale=2)
-                        api_key_input = gr.Textbox(label=i18n("Gemini API Key"), type="password", scale=3)
+                        ai_backend_input = gr.Dropdown(choices=[(i18n("Gemini"), "gemini"), (i18n("G4F"), "g4f"), (i18n("GitHub Copilot"), "copilot"), (i18n("Local (GGUF)"), "local"), (i18n("Manual"), "manual")], label=i18n("AI Backend"), value=selected_api_default, scale=2)
+                        api_key_input = gr.Textbox(label=initial_api_label, type="password", value=initial_api_key_value, scale=3)
                     
                     # New Dynamic Inputs
                     with gr.Row():
-                        ai_model_input = gr.Dropdown(choices=GEMINI_MODELS, label=i18n("AI Model"), value=GEMINI_MODELS[1], allow_custom_value=True, visible=True, scale=5)
+                        ai_model_input = gr.Dropdown(choices=initial_model_choices, label=i18n("AI Model"), value=initial_model_value, allow_custom_value=True, visible=(selected_api_default != "manual"), scale=5)
                         refresh_models_btn = gr.Button("🔄", size="sm", visible=False, scale=0, min_width=50) # Only local
-                        chunk_size_input = gr.Number(label=i18n("Chunk Size"), value=70000, precision=0, scale=2)
-                    
+                        save_config_btn = gr.Button(i18n("Save Provider Config"), size="sm", scale=0, min_width=120)
+                        chunk_size_input = gr.Number(label=i18n("Chunk Size"), value=initial_chunk, precision=0, scale=2)
+                        config_status_output = gr.Textbox(label=i18n("Config Status"), value="", interactive=False, lines=1)
+
+                    with gr.Row():
+                        open_github_token_btn = gr.Button(i18n("Open GitHub Token Page"), size="sm", scale=0, min_width=180)
+                        login_gh_cli_btn = gr.Button(i18n("Login with GitHub CLI"), size="sm", scale=0, min_width=180)
+                        import_gh_cli_btn = gr.Button(i18n("Import Token from GitHub CLI"), size="sm", scale=0, min_width=220)
+
                     # Update listeners with logic to hide/show API key
                     def update_ai_ui(backend):
-                        show_api = (backend == "gemini")
+                        show_api = (backend in ["gemini", "copilot"])
                         show_refresh = (backend == "local")
+                        
+                        # Update API key label based on backend
+                        if backend == "gemini":
+                            api_label = i18n("Gemini API Key")
+                        elif backend == "copilot":
+                            api_label = i18n("GitHub Token")
+                        else:
+                            api_label = i18n("API Key")
                         
                         # Definições padrão para evitar que fiquem vazios
                         new_choices = []
@@ -453,6 +578,10 @@ with gr.Blocks(title=i18n("ViralCutter WebUI"), theme=gr.themes.Default(primary_
                             new_choices = G4F_MODELS
                             new_val = G4F_MODELS[5]
                             new_chunk = 70000
+                        elif backend == "copilot":
+                            new_choices = COPILOT_MODELS
+                            new_val = COPILOT_MODELS[0]
+                            new_chunk = 10000
                         elif backend == "local":
                             models = get_local_models()
                             new_choices = models if models else [i18n("No models found")]
@@ -462,7 +591,7 @@ with gr.Blocks(title=i18n("ViralCutter WebUI"), theme=gr.themes.Default(primary_
                              pass
 
                         return (
-                            gr.update(visible=show_api), # API Key Visibility (Fixes hole 1)
+                            gr.update(visible=show_api, label=api_label), # API Key Visibility & Label
                             gr.update(choices=new_choices, value=new_val, visible=(backend != "manual")), # Model Dropdown
                             gr.update(visible=show_refresh), # Refresh Button
                             gr.update(value=new_chunk) # Chunk Size
@@ -474,6 +603,14 @@ with gr.Blocks(title=i18n("ViralCutter WebUI"), theme=gr.themes.Default(primary_
                         return gr.update(choices=models, value=val)
 
                     refresh_models_btn.click(refresh_local_models, outputs=ai_model_input)
+                    save_config_btn.click(save_api_config, inputs=[ai_backend_input, api_key_input, ai_model_input, chunk_size_input], outputs=[config_status_output])
+                    open_github_token_btn.click(
+                        open_github_token_page,
+                        outputs=[config_status_output],
+                        js="() => { window.open('https://github.com/settings/tokens/new', '_blank', 'noopener,noreferrer'); return []; }"
+                    )
+                    login_gh_cli_btn.click(start_github_cli_login, outputs=[config_status_output])
+                    import_gh_cli_btn.click(import_github_cli_token, outputs=[config_status_output])
                     ai_backend_input.change(update_ai_ui, inputs=ai_backend_input, outputs=[api_key_input, ai_model_input, refresh_models_btn, chunk_size_input])
 
                     model_input = gr.Dropdown(["tiny", "small", "medium", "large", "large-v1", "large-v2", "large-v3", "turbo", "large-v3-turbo", "distil-large-v2", "distil-medium.en", "distil-small.en", "distil-large-v3"], label=i18n("Whisper Model"), value="large-v3-turbo")
