@@ -15,3 +15,4 @@ fastapi
 uvicorn
 deep-translator
 tqdm
+python-dotenv>=1.0.0

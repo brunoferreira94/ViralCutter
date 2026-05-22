@@ -1,4 +1,5 @@
-import gradio as gr
+# flake8: noqa
+import gradio as gr  # type: ignore[reportMissingImports]
 import subprocess
 import os
 import sys
@@ -7,24 +8,27 @@ import psutil
 import shutil
 import datetime
 import time
-import urllib.parse
 from fastapi import FastAPI
 from fastapi.staticfiles import StaticFiles
 import uvicorn
 
-
 import re
-import library # Module for Library Logic
-import subtitle_handler as subs # Module for Subtitles
-import subtitle_editor as editor # Module for Editor Logic
+import library  # Module for Library Logic
+import subtitle_handler as subs  # Module for Subtitles
+import subtitle_editor as editor  # Module for Editor Logic
 
 # Path to the main script
-MAIN_SCRIPT_PATH = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "main_improved.py")
+MAIN_SCRIPT_PATH = os.path.join(
+    os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "main_improved.py"
+)
 WORKING_DIR = os.path.dirname(MAIN_SCRIPT_PATH)
 sys.path.append(WORKING_DIR)
 
-from i18n.i18n import I18nAuto
+from config import initialize_environment  # noqa: E402
+
+from i18n.i18n import I18nAuto  # noqa: E402
 i18n = I18nAuto()
+APP_CONFIG = initialize_environment()
 
 # --- PRESETS DEFINITIONS ---
 FACE_PRESETS = {
@@ -54,64 +58,70 @@ if not os.path.exists(MODELS_DIR):
 # Global variables
 current_process = None
 
-# Helpers
-def convert_color_to_ass(hex_color, alpha="00"):
-    try:
-        with open("debug_colors.log", "a") as f:
-             f.write(f"INPUT: '{hex_color}'\n")
-    except: pass
+DEBUG_COLORS_LOG = "debug_colors.log"
+TEMP_SUBTITLE_CONFIG = "temp_subtitle_config.json"
+SOURCE_YOUTUBE_URL = "YouTube URL"
+SOURCE_EXISTING_PROJECT = "Existing Project"
+SOURCE_UPLOAD_VIDEO = "Upload Video"
+WORKFLOW_MAP = {"Full": "1", "Cut Only": "2", "Subtitles Only": "3"}  # NOSONAR
+START_PROCESSING_LABEL = "Start Processing"
+SELECT_PROJECT_LABEL = "Select Project"
+API_KEY_LABEL = "API Key"
 
+# Helpers
+def _debug_color_log(message):
+    try:
+        with open(DEBUG_COLORS_LOG, "a", encoding="utf-8") as file_handle:
+            file_handle.write(f"{message}\n")
+    except OSError:
+        pass
+
+
+def _convert_rgb_to_ass(hex_clean, alpha):
+    nums = re.findall(r"[\d\.]+", hex_clean)
+    if len(nums) < 3:
+        return None
+
+    red = max(0, min(255, int(float(nums[0]))))
+    green = max(0, min(255, int(float(nums[1]))))
+    blue = max(0, min(255, int(float(nums[2]))))
+    return f"&H{alpha}{blue:02X}{green:02X}{red:02X}&".upper()
+
+
+def _convert_hex_to_ass(hex_clean, alpha):
+    normalized = hex_clean
+    if len(normalized) == 3:
+        normalized = "".join([char * 2 for char in normalized])
+    if len(normalized) != 6:
+        return None
+
+    red = normalized[0:2]
+    green = normalized[2:4]
+    blue = normalized[4:6]
+    return f"&H{alpha}{blue}{green}{red}&".upper()
+
+
+def convert_color_to_ass(hex_color, alpha="00"):
+    _debug_color_log(f"INPUT: '{hex_color}'")
     if not hex_color:
         return f"&H{alpha}FFFFFF&"
-    
-    hex_clean = hex_color.lstrip('#').strip()
-    
-    # Handle rgb/rgba format: rgb(255, 215, 0)
+
+    hex_clean = hex_color.lstrip("#").strip()
     if hex_clean.lower().startswith("rgb"):
         try:
-            # Extract numbers including floats
-            nums = re.findall(r"[\d\.]+", hex_clean)
-            if len(nums) >= 3:
-                r = int(float(nums[0]))
-                g = int(float(nums[1]))
-                b = int(float(nums[2]))
-                # Clamp
-                r = max(0, min(255, r))
-                g = max(0, min(255, g))
-                b = max(0, min(255, b))
-                # Convert to hex
-                ret = f"&H{alpha}{b:02X}{g:02X}{r:02X}&".upper()
-                try:
-                    with open("debug_colors.log", "a") as f:
-                         f.write(f"PARSED RGB: {ret}\n")
-                except: pass
-                return ret
-        except Exception as e:
-            try:
-                with open("debug_colors.log", "a") as f:
-                     f.write(f"RGB ERROR: {e}\n")
-            except: pass
+            rgb_value = _convert_rgb_to_ass(hex_clean, alpha)
+            if rgb_value:
+                _debug_color_log(f"PARSED RGB: {rgb_value}")
+                return rgb_value
+        except ValueError as error:
+            _debug_color_log(f"RGB ERROR: {error}")
 
-    # Handle 3-digit hex (e.g. F00 -> FF0000)
-    if len(hex_clean) == 3:
-        hex_clean = "".join([c*2 for c in hex_clean])
-        
-    if len(hex_clean) == 6:
-        r = hex_clean[0:2]
-        g = hex_clean[2:4]
-        b = hex_clean[4:6]
-        # Uppercase just in case
-        ret = f"&H{alpha}{b}{g}{r}&".upper() 
-        try:
-            with open("debug_colors.log", "a") as f:
-                 f.write(f"PARSED HEX: {ret}\n")
-        except: pass
-        return ret
-        
-    try:
-        with open("debug_colors.log", "a") as f:
-             f.write(f"INVALID: Defaulting to White\n")
-    except: pass
+    hex_value = _convert_hex_to_ass(hex_clean, alpha)
+    if hex_value:
+        _debug_color_log(f"PARSED HEX: {hex_value}")
+        return hex_value
+
+    _debug_color_log("INVALID: Defaulting to White")
     return f"&H{alpha}FFFFFF&"
 
 def kill_process():
@@ -162,8 +172,56 @@ COPILOT_MODELS = [
     'claude-3-haiku-20240307'
 ]
 
+
+def _resolve_provider_defaults(config):
+    selected_api = config.get('selected_api', 'gemini')
+    if selected_api == 'gemini':
+        section = config.get('gemini', {})
+        return (
+            'gemini',
+            i18n('Gemini API Key'),
+            section.get('api_key', ''),
+            GEMINI_MODELS,
+            section.get('model', GEMINI_MODELS[1]),
+            section.get('chunk_size', 70000),
+        )
+    if selected_api == 'copilot':
+        section = config.get('copilot', {})
+        return (
+            'copilot',
+            i18n('GitHub Token'),
+            section.get('github_token', ''),
+            COPILOT_MODELS,
+            section.get('model', COPILOT_MODELS[0]),
+            section.get('chunk_size', 10000),
+        )
+    if selected_api == 'g4f':
+        section = config.get('g4f', {})
+        return (
+            'g4f',
+            i18n(API_KEY_LABEL),
+            '',
+            G4F_MODELS,
+            section.get('model', G4F_MODELS[5]),
+            section.get('chunk_size', 70000),
+        )
+    if selected_api == 'local':
+        section = config.get('local', {})
+        local_models = get_local_models()
+        model_choices = local_models if local_models else [i18n('No models found')]
+        return (
+            'local',
+            i18n(API_KEY_LABEL),
+            '',
+            model_choices,
+            section.get('model', model_choices[0]),
+            section.get('chunk_size', 30000),
+        )
+    return ('manual', i18n(API_KEY_LABEL), '', [], '', 70000)
+
 def get_local_models():
-    if not os.path.exists(MODELS_DIR): return []
+    if not os.path.exists(MODELS_DIR):
+        return []
     return [f for f in os.listdir(MODELS_DIR) if f.endswith(".gguf")]
 
 
@@ -187,34 +245,27 @@ def save_api_config(selected_api, api_key, ai_model_name, chunk_size):
     config = load_api_config()
     config['selected_api'] = selected_api
 
-    if selected_api == 'gemini':
-        config.setdefault('gemini', {})
-        if api_key:
-            config['gemini']['api_key'] = api_key
+    section_name_by_api = {
+        'gemini': 'gemini',
+        'copilot': 'copilot',
+        'g4f': 'g4f',
+        'local': 'local',
+    }
+    api_key_field_by_api = {
+        'gemini': 'api_key',
+        'copilot': 'github_token',
+    }
+
+    section_name = section_name_by_api.get(selected_api)
+    if section_name:
+        section = config.setdefault(section_name, {})
+        key_field = api_key_field_by_api.get(selected_api)
+        if key_field and api_key:
+            section[key_field] = api_key
         if ai_model_name:
-            config['gemini']['model'] = ai_model_name
+            section['model'] = ai_model_name
         if chunk_size:
-            config['gemini']['chunk_size'] = int(chunk_size)
-    elif selected_api == 'copilot':
-        config.setdefault('copilot', {})
-        if api_key:
-            config['copilot']['github_token'] = api_key
-        if ai_model_name:
-            config['copilot']['model'] = ai_model_name
-        if chunk_size:
-            config['copilot']['chunk_size'] = int(chunk_size)
-    elif selected_api == 'g4f':
-        config.setdefault('g4f', {})
-        if ai_model_name:
-            config['g4f']['model'] = ai_model_name
-        if chunk_size:
-            config['g4f']['chunk_size'] = int(chunk_size)
-    elif selected_api == 'local':
-        config.setdefault('local', {})
-        if ai_model_name:
-            config['local']['model'] = ai_model_name
-        if chunk_size:
-            config['local']['chunk_size'] = int(chunk_size)
+            section['chunk_size'] = int(chunk_size)
 
     try:
         with open(config_path, 'w', encoding='utf-8') as f:
@@ -271,41 +322,56 @@ def import_github_cli_token():
 
 def apply_face_preset(preset_name):
     if preset_name not in FACE_PRESETS:
-        return [gr.update() for _ in range(4)] # No change
-    
+        return [gr.update() for _ in range(4)]  # No change
+
     p = FACE_PRESETS[preset_name]
     return p["thresh"], p["two_face"], p["conf"], p["dead_zone"]
 
+
 def apply_experimental_preset(preset_name):
     if preset_name not in EXPERIMENTAL_PRESETS:
-        return [gr.update() for _ in range(7)] # No change
-        
+        return [gr.update() for _ in range(7)]  # No change
+
     p = EXPERIMENTAL_PRESETS[preset_name]
     return p["focus"], p["mar"], p["score"], p["motion"], p["motion_th"], p["motion_sens"], p["decay"]
 
 # Subtitle logic moved to subtitle_handler.py
 
 
-def run_viral_cutter(input_source, project_name, url, video_file, segments, viral, themes, min_duration, max_duration, model, ai_backend, api_key, ai_model_name, chunk_size, workflow, face_model, face_mode, face_detect_interval, no_face_mode, 
-                     face_filter_thresh, face_two_thresh, face_conf_thresh, face_dead_zone, focus_active_speaker, active_speaker_mar, active_speaker_score_diff, include_motion, active_speaker_motion_threshold, active_speaker_motion_sensitivity, active_speaker_decay,
-                     use_custom_subs, font_name, font_size, font_color, highlight_color, outline_color, outline_thickness, shadow_color, shadow_size, is_bold, is_italic, is_uppercase, vertical_pos, alignment,
-                     h_size, w_block, gap, mode, under, strike, border_s, remove_punc, video_quality, use_youtube_subs, translate_target):
-    
+def run_viral_cutter(*args):  # NOSONAR
+    (
+        input_source, project_name, url, video_file, segments, viral, themes,
+        min_duration, max_duration, model, ai_backend, api_key,
+        ai_model_name, chunk_size, workflow, face_model, face_mode,
+        face_detect_interval, no_face_mode, face_filter_thresh,
+        face_two_thresh, face_conf_thresh, face_dead_zone,
+        focus_active_speaker, active_speaker_mar, active_speaker_score_diff,
+        include_motion, active_speaker_motion_threshold,
+        active_speaker_motion_sensitivity, active_speaker_decay,
+        use_custom_subs, font_name, font_size, font_color, highlight_color,
+        outline_color, outline_thickness, shadow_color, shadow_size, is_bold,
+        is_italic, is_uppercase, vertical_pos, alignment, h_size, w_block,
+        gap, mode, under, strike, border_s, remove_punc, video_quality,
+        use_youtube_subs, translate_target,
+    ) = args
+
     global current_process
     yield "", gr.update(value=i18n("Running..."), interactive=False), gr.update(visible=True), None 
+    logs = ""
+    project_folder_path = None
 
     cmd = [sys.executable, MAIN_SCRIPT_PATH]
     
     # Input Source Logic
-    if input_source == "Existing Project":
+    if input_source == SOURCE_EXISTING_PROJECT:
         if not project_name:
-             yield i18n("Error: No project selected."), gr.update(value=i18n("Start Processing"), interactive=True), gr.update(visible=False), None
+             yield i18n("Error: No project selected."), gr.update(value=i18n(START_PROCESSING_LABEL), interactive=True), gr.update(visible=False), None
              return
         full_project_path = os.path.join(VIRALS_DIR, project_name)
         cmd.extend(["--project-path", full_project_path])
-    elif input_source == "Upload Video":
+    elif input_source == SOURCE_UPLOAD_VIDEO:
         if not video_file:
-             yield i18n("Error: No video file uploaded."), gr.update(value=i18n("Start Processing"), interactive=True), gr.update(visible=False), None
+             yield i18n("Error: No video file uploaded."), gr.update(value=i18n(START_PROCESSING_LABEL), interactive=True), gr.update(visible=False), None
              return
         
         # Determine project name from filename
@@ -356,8 +422,7 @@ def run_viral_cutter(input_source, project_name, url, video_file, segments, vira
     if ai_model_name: cmd.extend(["--ai-model-name", str(ai_model_name)])
     if chunk_size: cmd.extend(["--chunk-size", str(int(chunk_size))])
 
-    workflow_map = {"Full": "1", "Cut Only": "2", "Subtitles Only": "3"}
-    cmd.extend(["--workflow", workflow_map.get(workflow, "1")])
+    cmd.extend(["--workflow", WORKFLOW_MAP.get(workflow, "1")])
     cmd.extend(["--face-model", face_model])
     cmd.extend(["--face-mode", face_mode])
     if face_detect_interval: cmd.extend(["--face-detect-interval", str(face_detect_interval)])
@@ -402,24 +467,25 @@ def run_viral_cutter(input_source, project_name, url, video_file, segments, vira
         # But I'll leave it in the dict.
         subtitle_config["uppercase"] = 1 if is_uppercase else 0
 
-        subtitle_config_path = os.path.join(WORKING_DIR, "temp_subtitle_config.json")
+        subtitle_config_path = os.path.join(WORKING_DIR, TEMP_SUBTITLE_CONFIG)
         try:
             with open(subtitle_config_path, "w", encoding="utf-8") as f:
                 json.dump(subtitle_config, f, indent=4)
             cmd.extend(["--subtitle-config", subtitle_config_path])
-        except Exception: pass 
+        except Exception:
+            pass
     
     env = os.environ.copy()
     env["PYTHONUNBUFFERED"] = "1"
     try:
         current_process = subprocess.Popen(cmd, cwd=WORKING_DIR, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, bufsize=1, universal_newlines=True, env=env)
-        logs = ""
-        project_folder_path = None
-        if input_source == "Existing Project" and project_name:
+        if input_source == SOURCE_EXISTING_PROJECT and project_name:
              # If using existing project, we already know the path, but let's see if logs confirm it
              project_folder_path = os.path.join(VIRALS_DIR, project_name)
 
         last_update_time = time.time()
+        if current_process.stdout is None:
+            raise RuntimeError("Unable to capture process stdout.")
         
         while True:
             line = current_process.stdout.readline()
@@ -448,7 +514,8 @@ def run_viral_cutter(input_source, project_name, url, video_file, segments, vira
             if current_process.stdout:
                 try:
                     current_process.stdout.close()
-                except Exception: pass
+                except Exception:
+                    pass
             if current_process.poll() is None:
                 # If we are here, it means we finished reading or errored out, but process is still running.
                 # If it was a normal break from loop, process should be done or close to done.
@@ -456,7 +523,8 @@ def run_viral_cutter(input_source, project_name, url, video_file, segments, vira
                 # But here we just wait.
                 try:
                     current_process.wait()
-                except Exception: pass
+                except Exception:
+                    pass
             current_process = None
     
     # Wait to ensure filesystem flush
@@ -467,7 +535,7 @@ def run_viral_cutter(input_source, project_name, url, video_file, segments, vira
         html_output = library.generate_project_gallery(project_folder_path, is_full_path=True)
     else:
         html_output = f"<h3>{i18n('Error: Project folder could not be determined from logs.')}</h3>"
-    yield logs, gr.update(value=i18n("Start Processing"), interactive=True), gr.update(visible=False), html_output
+    yield logs, gr.update(value=i18n(START_PROCESSING_LABEL), interactive=True), gr.update(visible=False), html_output
 
 css = """
 /* Global Dark Theme Overrides */
@@ -494,6 +562,14 @@ footer {visibility: hidden}
 }
 """
 
+api_cfg_defaults = _resolve_provider_defaults(load_api_config())
+selected_api_default = api_cfg_defaults[0]
+initial_api_label = api_cfg_defaults[1]
+initial_api_key_value = api_cfg_defaults[2]
+initial_model_choices = api_cfg_defaults[3]
+initial_model_value = api_cfg_defaults[4]
+initial_chunk = api_cfg_defaults[5]
+
 import header
 
 with gr.Blocks(title=i18n("ViralCutter WebUI"), theme=gr.themes.Default(primary_hue="orange", neutral_hue="slate"), css=css) as demo:
@@ -503,22 +579,22 @@ with gr.Blocks(title=i18n("ViralCutter WebUI"), theme=gr.themes.Default(primary_
         with gr.Tab(i18n("Create New")):
              with gr.Row():
                 with gr.Column(scale=1):
-                    input_source = gr.Radio([(i18n("YouTube URL"), "YouTube URL"), (i18n("Existing Project"), "Existing Project"), (i18n("Upload Video"), "Upload Video")], label=i18n("Input Source"), value="YouTube URL")
+                    input_source = gr.Radio([(i18n(SOURCE_YOUTUBE_URL), SOURCE_YOUTUBE_URL), (i18n(SOURCE_EXISTING_PROJECT), SOURCE_EXISTING_PROJECT), (i18n(SOURCE_UPLOAD_VIDEO), SOURCE_UPLOAD_VIDEO)], label=i18n("Input Source"), value=SOURCE_YOUTUBE_URL)
                     
-                    url_input = gr.Textbox(label=i18n("YouTube URL"), placeholder="https://www.youtube.com/watch?v=...", visible=True)
-                    video_upload = gr.File(label=i18n("Upload Video"), file_count="single", file_types=["video"], visible=False)
+                    url_input = gr.Textbox(label=i18n(SOURCE_YOUTUBE_URL), placeholder="https://www.youtube.com/watch?v=...", visible=True)
+                    video_upload = gr.File(label=i18n(SOURCE_UPLOAD_VIDEO), file_count="single", file_types=["video"], visible=False)
                     
                     with gr.Row():
                         video_quality_input = gr.Dropdown(choices=["best", "1080p", "720p", "480p"], label=i18n("Video Quality"), value="best")
                         translate_input = gr.Dropdown(choices=["None", "pt", "en", "es", "fr", "de", "it", "ru", "ja", "ko", "zh-CN"], label=i18n("Translate Subtitles To"), value="None")
                         use_youtube_subs_input = gr.Checkbox(label=i18n("Use YouTube Subs"), value=True, info=i18n("Download and use official subtitles if available. (Recommended, it speeds up the process)"))
 
-                    project_selector = gr.Dropdown(choices=[], label=i18n("Select Project"), visible=False)
+                    project_selector = gr.Dropdown(choices=[], label=i18n(SELECT_PROJECT_LABEL), visible=False)
                     
                     def on_source_change(source):
-                        if source == "YouTube URL":
+                        if source == SOURCE_YOUTUBE_URL:
                             return gr.update(visible=True), gr.update(visible=False), gr.update(visible=False), gr.update(value="Full") 
-                        elif source == "Upload Video":
+                        elif source == SOURCE_UPLOAD_VIDEO:
                              return gr.update(visible=False), gr.update(visible=False), gr.update(visible=True), gr.update(value="Full")
                         else:
                             # Load projects
@@ -727,7 +803,7 @@ with gr.Blocks(title=i18n("ViralCutter WebUI"), theme=gr.themes.Default(primary_
                 demo.load(subs.apply_preset, inputs=[preset_input], outputs=manual_inputs) # Apply default preset on load
 
              with gr.Row():
-                 start_btn = gr.Button(i18n("Start Processing"), variant="primary")
+                 start_btn = gr.Button(i18n(START_PROCESSING_LABEL), variant="primary")
                  stop_btn = gr.Button(i18n("Stop"), variant="stop", visible=False)
              stop_btn.click(kill_process, outputs=[])
              logs_output = gr.Textbox(label=i18n("Logs"), lines=10, autoscroll=True, elem_id="logs_output")
@@ -784,7 +860,7 @@ with gr.Blocks(title=i18n("ViralCutter WebUI"), theme=gr.themes.Default(primary_
             gr.Markdown(f"### {i18n('Edit Subtitles (Smart Mode)')}")
             
             with gr.Group():
-                editor_project_dropdown = gr.Dropdown(choices=library.get_existing_projects(), label=i18n("Select Project"), value=None)
+                editor_project_dropdown = gr.Dropdown(choices=library.get_existing_projects(), label=i18n(SELECT_PROJECT_LABEL), value=None)
                 editor_refresh_btn = gr.Button(i18n("Refresh"), size="sm")
             
             with gr.Group():
@@ -841,15 +917,19 @@ with gr.Blocks(title=i18n("ViralCutter WebUI"), theme=gr.themes.Default(primary_
 
             editor_save_btn.click(save_subs, inputs=[current_json_path, subtitle_dataframe], outputs=editor_status)
 
-            def render_single(json_path, use_custom, font_name, font_size, font_color, highlight_color, 
-                              outline_color, outline_thickness, shadow_color, shadow_size, 
-                              is_bold, is_italic, is_uppercase, 
-                              h_size, w_block, gap, mode, under, strike, border_s, 
-                              vertical_pos, alignment, remove_punc):
+            def render_single(*single_args):  # NOSONAR
+                (
+                    json_path, use_custom, font_name, font_size, font_color,
+                    highlight_color, outline_color, outline_thickness,
+                    shadow_color, shadow_size, is_bold, is_italic,
+                    is_uppercase, h_size, w_block, gap, mode, under, strike,
+                    border_s, vertical_pos, alignment, remove_punc,
+                ) = single_args
+
+                if not json_path:
+                    return i18n("No file loaded.")
                 
-                if not json_path: return i18n("No file loaded.")
-                
-                subtitle_config_path = os.path.join(WORKING_DIR, "temp_subtitle_config.json")
+                subtitle_config_path = os.path.join(WORKING_DIR, TEMP_SUBTITLE_CONFIG)
                 
                 # Save config if custom subs enabled
                 if use_custom:
@@ -872,13 +952,15 @@ with gr.Blocks(title=i18n("ViralCutter WebUI"), theme=gr.themes.Default(primary_
                     try:
                         with open(subtitle_config_path, "w", encoding="utf-8") as f:
                             json.dump(subtitle_config, f, indent=4)
-                    except Exception: pass
+                    except Exception:
+                        pass
                 else:
                     # Remove temp config if it exists to ensure defaults are used
                     try:
                         if os.path.exists(subtitle_config_path):
                             os.remove(subtitle_config_path)
-                    except Exception: pass
+                    except Exception:
+                        pass
                 
                 # We expect user to SAVE first, but we could auto-save.
                 # For now assume saved.
@@ -891,12 +973,16 @@ with gr.Blocks(title=i18n("ViralCutter WebUI"), theme=gr.themes.Default(primary_
                 outputs=editor_status
             )
 
-            def render_all(proj_name, use_custom, font_name, font_size, font_color, highlight_color, 
-                           outline_color, outline_thickness, shadow_color, shadow_size, 
-                           is_bold, is_italic, is_uppercase, 
-                           h_size, w_block, gap, mode, under, strike, border_s, 
-                           vertical_pos, alignment, remove_punc):
-                if not proj_name: return i18n("No project selected.")
+            def render_all(*all_args):  # NOSONAR
+                (
+                    proj_name, use_custom, font_name, font_size, font_color,
+                    highlight_color, outline_color, outline_thickness,
+                    shadow_color, shadow_size, is_bold, is_italic,
+                    is_uppercase, h_size, w_block, gap, mode, under, strike,
+                    border_s, vertical_pos, alignment, remove_punc,
+                ) = all_args
+                if not proj_name:
+                    return i18n("No project selected.")
                 
                 # Save config
                 if use_custom:
@@ -916,16 +1002,17 @@ with gr.Blocks(title=i18n("ViralCutter WebUI"), theme=gr.themes.Default(primary_
                         "uppercase": 1 if is_uppercase else 0,
                         "remove_punctuation": remove_punc
                     }
-                    subtitle_config_path = os.path.join(WORKING_DIR, "temp_subtitle_config.json")
+                    subtitle_config_path = os.path.join(WORKING_DIR, TEMP_SUBTITLE_CONFIG)
                     try:
                         with open(subtitle_config_path, "w", encoding="utf-8") as f:
                             json.dump(subtitle_config, f, indent=4)
-                    except Exception: pass
+                    except Exception:
+                        pass
 
                 proj_path = os.path.join(VIRALS_DIR, proj_name)
                 
                 # IMPORTANT: Pass the config file path to the command
-                subtitle_config_path = os.path.join(WORKING_DIR, "temp_subtitle_config.json")
+                subtitle_config_path = os.path.join(WORKING_DIR, TEMP_SUBTITLE_CONFIG)
                 cmd = [sys.executable, MAIN_SCRIPT_PATH, "--project-path", proj_path, "--workflow", "3", "--skip-prompts"]
                 
                 if use_custom and os.path.exists(subtitle_config_path):
@@ -1048,7 +1135,7 @@ if __name__ == "__main__":
                 share=False, 
                 allowed_paths=allowed_dirs, 
                 inbrowser=True,
-                server_name="0.0.0.0",
+                server_name=APP_CONFIG.viralcutter_host,
                 server_port=7860,
                 prevent_thread_lock=True
             )
@@ -1061,4 +1148,8 @@ if __name__ == "__main__":
             attach_extra_routes(app)
             # Disable SSR to prevent Node proxying issues on HF Spaces
             app = gr.mount_gradio_app(app, demo.queue(), path="/", allowed_paths=allowed_dirs, ssr_mode=False)
-            uvicorn.run(app, host="0.0.0.0", port=7860)
+            uvicorn.run(
+                app,
+                host=APP_CONFIG.viralcutter_host,
+                port=7860,
+            )

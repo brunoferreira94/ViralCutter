@@ -1,9 +1,10 @@
 import os
 import sys
 
-# Suppress unnecessary logs before importing heavy libs
-os.environ["ORT_LOGGING_LEVEL"] = "3" 
-os.environ["TF_CPP_MIN_LOG_LEVEL"] = "3"
+from config import initialize_environment
+
+# Initialize environment from config module (.env + defaults)
+APP_CONFIG = initialize_environment()
 
 import warnings
 warnings.filterwarnings("ignore")
@@ -126,11 +127,7 @@ def interactive_input_int(prompt_text):
 
 def get_copilot_env_token():
     """Return Copilot token from environment by priority."""
-    for env_name in ["COPILOT_GITHUB_TOKEN", "GH_TOKEN", "GITHUB_TOKEN"]:
-        value = os.environ.get(env_name, "").strip()
-        if value:
-            return value, env_name
-    return "", ""
+    return APP_CONFIG.resolve_copilot_token()
 
 def main():
     # Configuração de Argumentos via Linha de Comando (CLI)

@@ -87,12 +87,36 @@ To run ViralCutter on a fresh computer, you need to install the following core t
 
 2.  **Configure AI (Optional)**
     - **Gemini (Recommended/Free)**: Add your key in `api_config.json`.
-  - **GitHub Copilot (official SDK)**: Use OAuth App in WebUI (Start/Finish login) or provide a Copilot SDK-compatible token in `api_config.json`.
+    - **GitHub Copilot (official SDK)**: Use OAuth App in WebUI (Start/Finish login) or provide a Copilot SDK-compatible token in `api_config.json`.
     - **Local (GGUF)**: Download your favorite `.gguf` models and place them in the `models/` folder. ViralCutter will detect them automatically.
 
 3.  **Run**
     - Double-click `run_webui.bat` to open the interface in your browser.
     - Or use `python main_improved.py` for the CLI version.
+
+## Local venv and `.env`
+
+To keep secrets local and run in an isolated Python environment:
+
+1. On Windows, run:
+   ```bat
+   setup_venv.bat
+   ```
+2. Activate the venv:
+   ```bat
+   .venv\Scripts\activate
+   ```
+3. Copy the local env example:
+   ```bat
+   copy .env.example .env
+   ```
+4. Fill in values such as:
+   - `COPILOT_GITHUB_TOKEN`
+   - `GITHUB_TOKEN` / `GH_TOKEN`
+   - `COPILOT_OAUTH_CLIENT_ID`
+   - `COPILOT_OAUTH_CLIENT_SECRET`
+
+The project automatically loads `.env` if it is present.
 
 ## GitHub Copilot SDK in ViralCutter
 

@@ -1,3 +1,4 @@
+# flake8: noqa
 import json
 import os
 import re
@@ -6,12 +7,14 @@ import time
 import ast
 import io
 
+NON_WORD_SPACE_REGEX = r'[^\w\s]'
+
 # Configura stdout para evitar erros de encoding no Windows (substitui caracteres inválidos por ?)
 if sys.stdout and hasattr(sys.stdout, 'buffer'):
     try:
         # Mantém encoding original mas ignora erros (substitui por ?)
         sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding=sys.stdout.encoding or 'utf-8', errors='replace', line_buffering=True)
-    except:
+    except Exception:
         pass
 
 # Tenta importar bibliotecas de IA opcionalmente
@@ -39,7 +42,7 @@ try:
 except ImportError:
     HAS_COPILOT = False
 
-def clean_json_response(response_text):
+def clean_json_response(response_text):  # NOSONAR
     """
     Limpa a resposta focando em encontrar o objeto JSON que contém a chave "segments".
     Estratégia: 
@@ -61,7 +64,7 @@ def clean_json_response(response_text):
         if "\\n" in response_text or "\\\"" in response_text:
              # Tenta um decode básico de escapes
              response_text = response_text.replace("\\n", "\n").replace("\\\"", "\"").replace("\\'", "'")
-    except:
+    except Exception:
         pass
 
     # 2. Busca pela palavra-chave "segments"
@@ -92,7 +95,7 @@ def clean_json_response(response_text):
                 obj, _ = decoder.raw_decode(candidate_text)
                 if 'segments' in obj and isinstance(obj['segments'], list):
                     return obj
-            except:
+            except Exception:
                 pass
             
             # Tentativa B: ast.literal_eval
@@ -127,7 +130,7 @@ def clean_json_response(response_text):
                     obj = ast.literal_eval(clean_cand)
                     if 'segments' in obj and isinstance(obj['segments'], list):
                         return obj
-            except:
+            except Exception:
                 pass
 
     # 3. Fallback: Extração bruta de markdown
@@ -135,7 +138,7 @@ def clean_json_response(response_text):
         match = re.search(r"```json(.*?)```", response_text, re.DOTALL)
         if match:
             return json.loads(match.group(1))
-    except:
+    except Exception:
         pass
         
     # 4. LAST RESORT: Fragment Parser (Para JSON truncado/incompleto)
@@ -169,7 +172,7 @@ def clean_json_response(response_text):
             if found_segments:
                 print(f"[INFO] Recuperado {len(found_segments)} segmentos de JSON truncado.")
                 return {"segments": found_segments}
-    except:
+    except Exception:
         pass
 
     return {"segments": []}
@@ -183,7 +186,6 @@ def preprocess_transcript_for_ai(segments):
         return ""
 
     full_text = ""
-    last_tag_time = -100  # Force first tag
     
     # Try to start with (0s) based on first segment
     first_start = segments[0].get('start', 0)
@@ -236,7 +238,7 @@ def call_gemini(prompt, api_key, model_name='gemini-2.5-flash-lite-preview-09-20
     print("Falha após max retries no Gemini.")
     return "{}"
 
-def call_g4f(prompt, model_name="gpt-4o-mini"):
+def call_g4f(prompt, model_name="gpt-4o-mini"):  # NOSONAR
     if not HAS_G4F:
         raise ImportError("A biblioteca 'g4f' não está instalada. Instale com: pip install g4f")
     
@@ -252,7 +254,7 @@ def call_g4f(prompt, model_name="gpt-4o-mini"):
             
             if isinstance(response, dict):
                 if 'error' in response:
-                    raise Exception(f"API Error: {response['error']}")
+                    raise RuntimeError(f"API Error: {response['error']}")
                 if 'choices' in response and isinstance(response['choices'], list):
                     if len(response['choices']) > 0:
                          content = response['choices'][0].get('message', {}).get('content', '')
@@ -273,7 +275,7 @@ def call_g4f(prompt, model_name="gpt-4o-mini"):
 
             try:
                 return json.dumps(response, ensure_ascii=False)
-            except:
+            except Exception:
                 return str(response)
             
         except Exception as e:
@@ -381,7 +383,7 @@ def load_transcript(project_folder):
     
     return transcript_segments
 
-def process_segments(raw_segments, transcript_segments, min_duration, max_duration, output_count=None):
+def process_segments(raw_segments, transcript_segments, min_duration, max_duration, output_count=None):  # NOSONAR
     """
     Aligns raw AI segments (with reference tags) to actual transcript timestamps.
     Applies constraints, validation, and deduplication.
@@ -394,7 +396,7 @@ def process_segments(raw_segments, transcript_segments, min_duration, max_durati
     # Sort segments by score (descending)
     try:
         all_segments.sort(key=lambda x: int(x.get('score', 0)), reverse=True)
-    except:
+    except Exception:
         pass
 
     # --- POST-PROCESSING: Match Text to Timestamps ---
@@ -414,7 +416,7 @@ def process_segments(raw_segments, transcript_segments, min_duration, max_durati
                          ref_time_val = int(match.group())
                 else:
                     ref_time_val = int(ref_time_str)
-            except:
+            except Exception:
                 ref_time_val = 0
                 
             # Find segment index closest to ref_time
@@ -434,7 +436,7 @@ def process_segments(raw_segments, transcript_segments, min_duration, max_durati
             # 2. Find Exact Start Text
             start_text_target = seg.get('start_text', '').lower().strip()
             # Normalize
-            start_text_target = re.sub(r'[^\w\s]', '', start_text_target)
+            start_text_target = re.sub(NON_WORD_SPACE_REGEX, '', start_text_target)
             
             final_start_time = -1
             match_start_idx = -1
@@ -444,7 +446,7 @@ def process_segments(raw_segments, transcript_segments, min_duration, max_durati
             
             for i in range(start_idx, search_limit):
                 s_text = transcript_segments[i]['text'].lower()
-                s_text = re.sub(r'[^\w\s]', '', s_text)
+                s_text = re.sub(NON_WORD_SPACE_REGEX, '', s_text)
                 
                 # Check for partial match
                 if start_text_target and (start_text_target in s_text or s_text in start_text_target):
@@ -459,7 +461,7 @@ def process_segments(raw_segments, transcript_segments, min_duration, max_durati
 
             # 3. Find End Text
             end_text_target = seg.get('end_text', '').lower().strip()
-            end_text_target = re.sub(r'[^\w\s]', '', end_text_target)
+            end_text_target = re.sub(NON_WORD_SPACE_REGEX, '', end_text_target)
             
             final_end_time = -1
             
@@ -468,7 +470,7 @@ def process_segments(raw_segments, transcript_segments, min_duration, max_durati
                 
                 for i in range(match_start_idx, search_end_limit):
                     s_text = transcript_segments[i]['text'].lower()
-                    s_text = re.sub(r'[^\w\s]', '', s_text)
+                    s_text = re.sub(NON_WORD_SPACE_REGEX, '', s_text)
                     
                     if end_text_target and (end_text_target in s_text or s_text in end_text_target):
                          final_end_time = transcript_segments[i]['end']
@@ -551,7 +553,7 @@ def process_segments(raw_segments, transcript_segments, min_duration, max_durati
     return final_result
 
 
-def create(num_segments, viral_mode, themes, tempo_minimo, tempo_maximo, ai_mode="manual", api_key=None, project_folder="tmp", chunk_size_arg=None, model_name_arg=None):
+def create(num_segments, viral_mode, themes, tempo_minimo, tempo_maximo, ai_mode="manual", api_key=None, project_folder="tmp", chunk_size_arg=None, model_name_arg=None):  # NOSONAR
     quantidade_de_virals = num_segments
 
     # 1. Load Transcript
@@ -811,7 +813,7 @@ OUTPUT JSON ONLY:
                     try:
                         rest = sys.stdin.read() 
                         response_text += rest
-                    except:
+                    except Exception:
                         pass
 
         elif ai_mode == "gemini":
@@ -855,7 +857,7 @@ OUTPUT JSON ONLY:
             print(f"Encontrados {len(chunk_segments)} segmentos neste chunk.")
             all_raw_segments.extend(chunk_segments)
         except json.JSONDecodeError:
-            print(f"Erro: Resposta inválida.")
+            print("Erro: Resposta inválida.")
         except Exception as e:
             print(f"Erro desconhecido ao processar chunk: {e}")
 

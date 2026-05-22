@@ -1,6 +1,6 @@
 # ViralCutter
 
-[![Discord](https://dcbadge.limes.pink/api/server/tAdPHFAbud)](https://discord.gg/tAdPHFAbud)<br>
+[![Discord](https://dcbadge.limes.pink/api/server/tAdPHFAbud)](https://discord.gg/tAdPHFAbud)
 
 **Alternativa open-source 100% gratuita, local e ilimitada ao Opus Clip**  
 Transforme vídeos longos do YouTube em shorts virais otimizados para TikTok, Instagram Reels e YouTube Shorts – com IA de ponta, legendas dinâmicas, _face tracking_ preciso e tradução automática. Tudo rodando na sua máquina.
@@ -78,21 +78,52 @@ Para rodar o ViralCutter em um computador novo, você precisa instalar os seguin
 
 ### Passo a Passo da Instalação
 
-1.  **Instale as dependências via Script**
-    Acesse a pasta do ViralCutter e escolha **um dos instaladores** abaixo com duplo clique:
-    - `install_dependencies.bat`: Instalação **padrão** (Recomendada). Mais rápida e à prova de falhas. Usa IAs como Gemini (Grátis) e GPT-4 pela internet.
-    - `install_dependencies_advanced_LocalLLM.bat`: Instalação **avançada**. Dedicada para quem quer rodar IAs 100% offline no hardware (Llama 3, etc). Exige placa de vídeo boa e as ferramentas _C++ Build Tools_.
+1. **Instale as dependências via Script**
+   Acesse a pasta do ViralCutter e escolha **um dos instaladores** abaixo com duplo clique:
+   - `install_dependencies.bat`: Instalação **padrão** (Recomendada). Mais rápida e à prova de falhas. Usa IAs como Gemini (Grátis) e GPT-4 pela internet.
+   - `install_dependencies_advanced_LocalLLM.bat`: Instalação **avançada**. Dedicada para quem quer rodar IAs 100% offline no hardware (Llama 3, etc). Exige placa de vídeo boa e as ferramentas _C++ Build Tools_.
 
-    _(Ambos usam o gerenciador `uv` para configurar tudo automaticamente)._
+   _(Ambos usam o gerenciador `uv` para configurar tudo automaticamente)._
 
-2.  **Configurar IA (Opcional)**
-  - **Gemini (Recomendado/Free)**: Adicione sua chave em `api_config.json`.
-  - **GitHub Copilot (SDK oficial)**: Use OAuth App no WebUI (Start/Finish login) ou informe token compatível com Copilot SDK na seção `copilot` do `api_config.json`.
-  - **Local (GGUF)**: Baixe seus modelos `.gguf` favoritos e coloque na pasta `models/`. O ViralCutter irá detectá-los automaticamente.
+1. **Configurar IA (Opcional)**
 
-3.  **Rodar**
-    - Duplo clique em `run_webui.bat` para abrir a interface no navegador.
-    - Ou use `python main_improved.py` para a versão CLI.
+- **Gemini (Recomendado/Free)**: Adicione sua chave em `api_config.json`.
+- **GitHub Copilot (SDK oficial)**: Use OAuth App no WebUI (Start/Finish login) ou informe token compatível com Copilot SDK na seção `copilot` do `api_config.json`.
+- **Local (GGUF)**: Baixe seus modelos `.gguf` favoritos e coloque na pasta `models/`. O ViralCutter irá detectá-los automaticamente.
+
+1. **Rodar**
+   - Duplo clique em `run_webui.bat` para abrir a interface no navegador.
+   - Ou use `python main_improved.py` para a versão CLI.
+
+## Ambiente Local com venv e `.env`
+
+Se você quer manter as variáveis secretas fora do repositório e isolar o Python localmente:
+
+1. No Windows, execute:
+
+```bat
+setup_venv.bat
+```
+
+1. Ative o ambiente virtual:
+
+```bat
+.venv\Scripts\activate
+```
+
+1. Copie o exemplo de variáveis locais:
+
+```bat
+copy .env.example .env
+```
+
+1. Preencha valores como:
+   - `COPILOT_GITHUB_TOKEN`
+   - `GITHUB_TOKEN` / `GH_TOKEN`
+   - `COPILOT_OAUTH_CLIENT_ID`
+   - `COPILOT_OAUTH_CLIENT_SECRET`
+
+O projeto carrega automaticamente `.env` quando existe.
 
 ## GitHub Copilot SDK no ViralCutter
 
@@ -101,13 +132,17 @@ A integração usa cliente oficial `github-copilot-sdk` com bridge dedicado em P
 ### Setup rápido (5 minutos)
 
 1. Configure as variáveis de OAuth App (recomendado para WebUI):
-  - `COPILOT_OAUTH_CLIENT_ID`
-  - `COPILOT_OAUTH_CLIENT_SECRET` (quando aplicável)
-2. Abra o WebUI (`run_webui.bat` ou `python webui/app.py`)
-  - Selecione **GitHub Copilot** no backend de IA
-  - Clique em **Start Copilot OAuth Login** e autorize no GitHub
-  - Clique em **Finish Copilot OAuth Login** para salvar o token
-3. Escolha um modelo compatível do Copilot SDK e processe normalmente.
+
+- `COPILOT_OAUTH_CLIENT_ID`
+- `COPILOT_OAUTH_CLIENT_SECRET` (quando aplicável)
+
+1. Abra o WebUI (`run_webui.bat` ou `python webui/app.py`)
+
+- Selecione **GitHub Copilot** no backend de IA
+- Clique em **Start Copilot OAuth Login** e autorize no GitHub
+- Clique em **Finish Copilot OAuth Login** para salvar o token
+
+1. Escolha um modelo compatível do Copilot SDK e processe normalmente.
 
 Também é possível configurar pelo `api_config.json`:
 
@@ -132,7 +167,7 @@ Use os modelos habilitados pela sua conta Copilot SDK (exemplo: `gpt-4.1`).
 ### Troubleshooting (Copilot)
 
 - **401 / token inválido ou expirado**:
-  - Gere um novo token em https://github.com/settings/tokens
+  - Gere um novo token em [github.com/settings/tokens](https://github.com/settings/tokens)
 - **403 / permissões insuficientes**:
   - Gere novo token OAuth/fine-grained compatível com Copilot SDK
 - **429 / rate limit**:
@@ -239,14 +274,14 @@ Isso permite manter saídas, modelos e configurações entre execuções sem reb
 
 ## Exemplos de Saída
 
-**Clip viral com legendas highlight**  
-<video src="https://github.com/user-attachments/assets/7a32edce-fa29-4693-985f-2b12313362f3" controls></video>
+**Clip viral com legendas highlight**
+[Assistir exemplo](https://github.com/user-attachments/assets/7a32edce-fa29-4693-985f-2b12313362f3)
 
-**Comparação direta: Opus Clip vs ViralCutter** (mesmo vídeo de entrada)  
-<video src="https://github.com/user-attachments/assets/12916792-dc0e-4f63-a76b-5698946f50f4" controls></video>
+**Comparação direta: Opus Clip vs ViralCutter** (mesmo vídeo de entrada)
+[Assistir comparação](https://github.com/user-attachments/assets/12916792-dc0e-4f63-a76b-5698946f50f4)
 
-**Modo Split Screen (2 faces)**  
-<video src="https://github.com/user-attachments/assets/f5ce5168-04a2-4c9b-9408-949a5400d020" controls></video>
+**Modo Split Screen (2 faces)**
+[Assistir split screen](https://github.com/user-attachments/assets/f5ce5168-04a2-4c9b-9408-949a5400d020)
 
 ## Roadmap (TODO)
 
@@ -266,7 +301,7 @@ Isso permite manter saídas, modelos e configurações entre execuções sem reb
 
 ---
 
-## Contribua!
+## Contribua
 
 O ViralCutter é mantido pela comunidade. Junte-se a nós para democratizar a criação de conteúdo com IA!
 
