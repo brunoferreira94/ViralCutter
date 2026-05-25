@@ -1,0 +1,8 @@
+version: "3.8"
+
+services:
+  webui-gpu:
+    gpus: all
+
+  cli-gpu:
+    gpus: all
