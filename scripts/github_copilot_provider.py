@@ -15,6 +15,14 @@ from typing import Dict, Optional
 
 logger = logging.getLogger(__name__)
 
+try:
+    from . import prompt_store as _prompt_store
+except Exception:
+    try:
+        import prompt_store as _prompt_store
+    except Exception:
+        _prompt_store = None
+
 
 class GitHubCopilotProvider:
     def __init__(self, github_token: str, model: str = "gpt-4.1"):
@@ -67,7 +75,19 @@ class GitHubCopilotProvider:
             )
             self.model = used_model
 
-        return str(result.get("content", ""))
+        content = str(result.get("content", ""))
+
+        # Best-effort: save prompt + response for organization
+        try:
+            if _prompt_store:
+                try:
+                    _prompt_store.save_prompt_response(prompt=prompt, response=content, provider="copilot", model=used_model)
+                except Exception:
+                    pass
+        except Exception:
+            pass
+
+        return content
 
     def validate_token(self) -> bool:
         response = self._call_bridge("Reply with OK only.")

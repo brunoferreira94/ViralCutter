@@ -478,8 +478,8 @@ def main():
                          api_config["copilot"]["model"] = args.ai_model_name
                      if args.chunk_size:
                          api_config["copilot"]["chunk_size"] = args.chunk_size
-                    if save_api_config(api_config, config_path):
-                        print(i18n("GitHub Copilot token saved to secure local storage."))
+                     if save_api_config(api_config, config_path):
+                         print(i18n("GitHub Copilot token saved to secure local storage."))
 
         if ai_backend == "copilot" and api_key:
              cfg_key = api_config.get("copilot", {}).get("github_token", "")

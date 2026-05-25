@@ -246,6 +246,42 @@ docker compose --profile webui-gpu up --build webui-gpu
 docker compose --profile cli-gpu run --rm cli-gpu --help
 ```
 
+### Nota sobre GPUs e compatibilidade do Docker Compose
+
+Algumas versões mais antigas do plugin `docker compose` validam a chave `gpus` no arquivo principal e podem falhar com um erro do tipo "Additional property gpus is not allowed". Para compatibilidade com máquinas que não têm a versão mais recente do Compose, o repositório inclui um arquivo de override opcional:
+
+- `docker-compose.gpu.yml` — contém apenas a configuração `gpus: all` para os serviços GPU.
+
+Uso recomendado:
+
+Sem GPU (modo padrão):
+```bash
+docker compose --profile cli run --rm cli --help
+```
+
+Com GPU (use o override):
+```bash
+docker compose -f docker-compose.yml -f docker-compose.gpu.yml --profile cli-gpu run --rm cli-gpu --help
+```
+
+Se preferir atualizar o `docker compose` no Linux (Debian/Ubuntu), instale/atualize o plugin oficial:
+
+```bash
+sudo apt update
+sudo apt install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
+sudo systemctl restart docker
+docker compose version
+```
+
+Nota rápida para zsh: quando usar a linha que baixa a chave GPG do repositório Docker, prefira separar em duas etapas para evitar erros de parsing no zsh:
+
+```bash
+. /etc/os-release
+sudo mkdir -p /etc/apt/keyrings
+curl -fsSL "https://download.docker.com/linux/$ID/gpg" | sudo gpg --dearmor -o /etc/apt/keyrings/docker.gpg
+```
+
+
 ### Volumes persistentes
 
 O `docker-compose.yml` já monta automaticamente:

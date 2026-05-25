@@ -43,6 +43,9 @@ response.json
 response_raw_part_*.txt
 VIRALS/*/prompts/
 
+# prompt store archive
+prompts_archive/
+
 # Local model artifacts
 models/*.gguf
 

@@ -146,6 +146,24 @@ async def _run_with_sdk(input_payload):
                 if response is not None and getattr(response, "data", None) is not None:
                     content = getattr(response.data, "content", "") or ""
 
+                # Best-effort: save prompt+response for debugging/organization
+                try:
+                    try:
+                        from . import prompt_store as _ps
+                    except Exception:
+                        try:
+                            import prompt_store as _ps
+                        except Exception:
+                            _ps = None
+
+                    if _ps:
+                        try:
+                            _ps.save_prompt_response(prompt=prompt, response=content, provider="copilot_bridge", model=model_name)
+                        except Exception:
+                            pass
+                except Exception:
+                    pass
+
                 return {
                     "ok": True,
                     "content": content,

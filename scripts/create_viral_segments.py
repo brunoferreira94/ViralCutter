@@ -915,6 +915,24 @@ OUTPUT JSON ONLY:
         except Exception as e:
             print(f"[WARN] Failed to save raw response: {e}")
 
+        # Best-effort: save prompt+response via prompt_store for organized archive
+        try:
+            try:
+                from . import prompt_store as _ps
+            except Exception:
+                try:
+                    import prompt_store as _ps
+                except Exception:
+                    _ps = None
+
+            if _ps:
+                try:
+                    _ps.save_prompt_response(prompt=prompt, response=response_text, provider="create_viral_segments", model=model_name if 'model_name' in locals() else None, project_folder=project_folder)
+                except Exception:
+                    pass
+        except Exception:
+            pass
+
         # Processar resposta
         try:
             data = clean_json_response(response_text)
