@@ -191,6 +191,7 @@ Use os modelos habilitados pela sua conta Copilot SDK (exemplo: `gpt-4.1`).
 ```bash
 python -c "import copilot; print('OK copilot-sdk')"
 python -m py_compile scripts/copilot_sdk_bridge.py scripts/github_copilot_provider.py scripts/create_viral_segments.py
+
 python main_improved.py --ai-backend gemini
 ```
 

@@ -58,6 +58,15 @@ class GitHubCopilotProvider:
             err = result.get("error", "unknown_error")
             raise RuntimeError(f"Copilot SDK error: {err}")
 
+        used_model = str(result.get("model_used", "")).strip()
+        if used_model and used_model != self.model:
+            logger.info(
+                "Copilot bridge resolved model '%s' -> '%s'",
+                self.model,
+                used_model,
+            )
+            self.model = used_model
+
         return str(result.get("content", ""))
 
     def validate_token(self) -> bool:

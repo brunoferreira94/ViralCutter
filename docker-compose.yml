@@ -10,6 +10,8 @@ services:
     command: ["python", "webui/app.py"]
     ports:
       - "7860:7860"
+    env_file:
+      - ./.env
     volumes:
       - ./VIRALS:/app/VIRALS
       - ./models:/app/models
@@ -17,6 +19,9 @@ services:
       - ./prompt.txt:/app/prompt.txt
     environment:
       - PYTHONUNBUFFERED=1
+      - VIRALCUTTER_HOST=0.0.0.0
+      - LANG=pt_BR.UTF-8
+      - LC_ALL=pt_BR.UTF-8
 
   cli:
     build:
@@ -25,6 +30,8 @@ services:
     image: viralcutter:cpu
     profiles: ["cli"]
     entrypoint: ["python", "main_improved.py"]
+    env_file:
+      - ./.env
     volumes:
       - ./VIRALS:/app/VIRALS
       - ./models:/app/models
@@ -32,6 +39,9 @@ services:
       - ./prompt.txt:/app/prompt.txt
     environment:
       - PYTHONUNBUFFERED=1
+      - VIRALCUTTER_HOST=0.0.0.0
+      - LANG=pt_BR.UTF-8
+      - LC_ALL=pt_BR.UTF-8
 
   webui-gpu:
     build:
@@ -42,6 +52,8 @@ services:
     command: ["python", "webui/app.py"]
     ports:
       - "7860:7860"
+    env_file:
+      - ./.env
     volumes:
       - ./VIRALS:/app/VIRALS
       - ./models:/app/models
@@ -49,6 +61,8 @@ services:
       - ./prompt.txt:/app/prompt.txt
     environment:
       - PYTHONUNBUFFERED=1
+      - LANG=pt_BR.UTF-8
+      - LC_ALL=pt_BR.UTF-8
     gpus: all
 
   cli-gpu:
@@ -58,6 +72,8 @@ services:
     image: viralcutter:gpu
     profiles: ["gpu", "cli-gpu"]
     entrypoint: ["python", "main_improved.py"]
+    env_file:
+      - ./.env
     volumes:
       - ./VIRALS:/app/VIRALS
       - ./models:/app/models
@@ -65,4 +81,6 @@ services:
       - ./prompt.txt:/app/prompt.txt
     environment:
       - PYTHONUNBUFFERED=1
+      - LANG=pt_BR.UTF-8
+      - LC_ALL=pt_BR.UTF-8
     gpus: all

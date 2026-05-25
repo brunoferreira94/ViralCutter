@@ -6,9 +6,29 @@ import whisperx
 import gc
 import re
 import glob
+import io
+from contextlib import redirect_stdout, redirect_stderr
 from i18n.i18n import I18nAuto
 
 i18n = I18nAuto()
+
+
+def _env_flag(name, default="0"):
+    value = os.getenv(name, default)
+    return str(value).strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _should_skip_alignment(segments_count, alignment_only):
+    if _env_flag("VIRALCUTTER_SKIP_ALIGNMENT", "0"):
+        return True
+
+    max_segments = int(os.getenv("VIRALCUTTER_MAX_ALIGN_SEGMENTS", "600"))
+    return alignment_only and segments_count > max_segments
+
+
+def _summarize_align_output(log_text):
+    marker = "Failed to align segment"
+    return log_text.count(marker)
 
 def apply_safe_globals_hack():
     """
@@ -282,35 +302,74 @@ def transcribe(input_file, model_name='large-v3', project_folder='tmp'):
                 gc.collect()
                 torch.cuda.empty_cache()
 
-        # 4. Alinhar (Sempre executado, seja com subs parsed ou transcritos)
-        print(f"Alinhando transcrição (Idioma: {detected_language}) para obter timestamps precisos...")
+        # 4. Alinhar (sempre que não for pulado por configuração/heurística)
+        should_skip_alignment = _should_skip_alignment(
+            segments_count=len(start_segments or []),
+            alignment_only=alignment_only,
+        )
+
+        if should_skip_alignment:
+            print(
+                "Pulando alinhamento do WhisperX para reduzir tempo/instabilidade. "
+                "Use VIRALCUTTER_SKIP_ALIGNMENT=0 para forçar alinhamento."
+            )
+            result = {"segments": start_segments, "language": detected_language}
+        else:
+            print(
+                f"Alinhando transcrição (Idioma: {detected_language}) "
+                "para obter timestamps precisos..."
+            )
         # Usa o modelo específico solicitado pelo usuário: WAV2VEC2_ASR_LARGE_LV60K_960H
         # Mas o whisperx.load_align_model escolhe automaticamente baseado na linguagem.
         # Se for inglês, ele usa wav2vec2-large-960h-lv60-self geralmente.
         # Não podemos forçar facilmente o modelo exato sem hackear o whisperx, mas o padrão é bom.
         
-        try:
-            model_a, metadata = whisperx.load_align_model(language_code=detected_language, device=device)
-            
-            aligned_result = whisperx.align(start_segments, model_a, metadata, audio, device, return_char_alignments=False)
-            
-            # aligned_result agora contém "segments" com word timestamps
-            result = aligned_result
-            result["language"] = detected_language
-            
-            if device == "cuda":
-                 del model_a
-                 torch.cuda.empty_cache()
-                 
-        except Exception as e:
-            print(f"Erro durante alinhamento: {e}. ")
-            if alignment_only:
-                 print("Falha crítica no alinhamento de legendas externas. Abortando usage de legendas externas.")
-                 # Opcional: Fallback para transcrição normal se falhar? Seria complexo aqui pois já limpamos memória.
-                 # Vamos apenas salvar o que temos (timestamps da legenda original podem não bater com áudio perfeitamente se não alinhar)
-                 result = {"segments": start_segments, "language": detected_language}
-            else:
-                 print("Continuando com transcrição bruta.")
+            try:
+                model_a, metadata = whisperx.load_align_model(
+                    language_code=detected_language,
+                    device=device,
+                )
+
+                # WhisperX pode emitir milhares de mensagens "backtrack failed".
+                # Capturamos essa saída e mostramos apenas um resumo.
+                align_stdout = io.StringIO()
+                align_stderr = io.StringIO()
+                with redirect_stdout(align_stdout), redirect_stderr(align_stderr):
+                    aligned_result = whisperx.align(
+                        start_segments,
+                        model_a,
+                        metadata,
+                        audio,
+                        device,
+                        return_char_alignments=False,
+                    )
+
+                align_log = align_stdout.getvalue() + align_stderr.getvalue()
+                backtrack_count = _summarize_align_output(align_log)
+                if backtrack_count > 0:
+                    print(
+                        f"WhisperX alignment: {backtrack_count} segmentos com "
+                        "fallback de alinhamento (backtrack)."
+                    )
+
+                # aligned_result agora contém "segments" com word timestamps
+                result = aligned_result
+                result["language"] = detected_language
+
+                if device == "cuda":
+                    del model_a
+                    torch.cuda.empty_cache()
+
+            except Exception as e:
+                print(f"Erro durante alinhamento: {e}. ")
+                if alignment_only:
+                    print(
+                        "Falha crítica no alinhamento de legendas externas. "
+                        "Usando timestamps originais da legenda."
+                    )
+                    result = {"segments": start_segments, "language": detected_language}
+                else:
+                    print("Continuando com transcrição bruta.")
 
         # 5. Salvar Resultados
         print("Salvando resultados...")

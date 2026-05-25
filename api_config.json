@@ -1,5 +1,5 @@
 {
-    "selected_api": "gemini",
+    "selected_api": "copilot",
     "gemini": {
         "api_key": "",
         "model": "gemini-2.5-flash-lite-preview-09-2025",
@@ -11,7 +11,7 @@
     },
     "copilot": {
         "github_token": "",
-        "model": "claude-3-5-sonnet-20241022",
+        "model": "claude*sonnet*",
         "chunk_size": 10000
     }
 }

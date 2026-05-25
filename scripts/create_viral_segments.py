@@ -7,7 +7,7 @@ import time
 import ast
 import io
 
-NON_WORD_SPACE_REGEX = r'[^\w\s]'
+from config import DEFAULT_COPILOT_MODEL
 
 # Configura stdout para evitar erros de encoding no Windows (substitui caracteres inválidos por ?)
 if sys.stdout and hasattr(sys.stdout, 'buffer'):
@@ -36,11 +36,19 @@ try:
 except ImportError:
     HAS_LLAMA_CPP = False
 
+COPILOT_IMPORT_ERROR = ""
 try:
-    from github_copilot_provider import GitHubCopilotProvider
+    # Runtime normal: importado como scripts.create_viral_segments
+    from .github_copilot_provider import GitHubCopilotProvider
     HAS_COPILOT = True
-except ImportError:
-    HAS_COPILOT = False
+except ImportError as rel_err:
+    try:
+        # Fallback para execucao direta do arquivo
+        from github_copilot_provider import GitHubCopilotProvider
+        HAS_COPILOT = True
+    except ImportError as abs_err:
+        HAS_COPILOT = False
+        COPILOT_IMPORT_ERROR = f"relative={rel_err}; absolute={abs_err}"
 
 def clean_json_response(response_text):  # NOSONAR
     """
@@ -186,6 +194,7 @@ def preprocess_transcript_for_ai(segments):
         return ""
 
     full_text = ""
+    last_tag_time = -100  # Force first tag
     
     # Try to start with (0s) based on first segment
     first_start = segments[0].get('start', 0)
@@ -323,16 +332,7 @@ def call_copilot(prompt, github_token, model_name="claude-3-5-sonnet-20241022"):
         
     except Exception as e:
         error_str = str(e)
-        print(f"[ERROR] GitHub Copilot API error: {error_str}")
-        
-        if "token invalid" in error_str or "expired" in error_str:
-            print("[ERROR] GitHub token invalid or expired for Copilot SDK.")
-        elif "scope" in error_str or "Forbidden" in error_str:
-            print("[ERROR] GitHub token lacks permissions for Copilot SDK.")
-        elif "rate limited" in error_str or "429" in error_str:
-            print("[ERROR] GitHub Copilot API rate limited. Try again later.")
-        
-        return "{}"
+        raise RuntimeError(error_str)
 
 def load_transcript(project_folder):
     """Parses input.tsv or input.srt from the project folder."""
@@ -436,7 +436,7 @@ def process_segments(raw_segments, transcript_segments, min_duration, max_durati
             # 2. Find Exact Start Text
             start_text_target = seg.get('start_text', '').lower().strip()
             # Normalize
-            start_text_target = re.sub(NON_WORD_SPACE_REGEX, '', start_text_target)
+            start_text_target = re.sub(r'[^\w\s]', '', start_text_target)
             
             final_start_time = -1
             match_start_idx = -1
@@ -446,7 +446,7 @@ def process_segments(raw_segments, transcript_segments, min_duration, max_durati
             
             for i in range(start_idx, search_limit):
                 s_text = transcript_segments[i]['text'].lower()
-                s_text = re.sub(NON_WORD_SPACE_REGEX, '', s_text)
+                s_text = re.sub(r'[^\w\s]', '', s_text)
                 
                 # Check for partial match
                 if start_text_target and (start_text_target in s_text or s_text in start_text_target):
@@ -461,7 +461,7 @@ def process_segments(raw_segments, transcript_segments, min_duration, max_durati
 
             # 3. Find End Text
             end_text_target = seg.get('end_text', '').lower().strip()
-            end_text_target = re.sub(NON_WORD_SPACE_REGEX, '', end_text_target)
+            end_text_target = re.sub(r'[^\w\s]', '', end_text_target)
             
             final_end_time = -1
             
@@ -470,7 +470,7 @@ def process_segments(raw_segments, transcript_segments, min_duration, max_durati
                 
                 for i in range(match_start_idx, search_end_limit):
                     s_text = transcript_segments[i]['text'].lower()
-                    s_text = re.sub(NON_WORD_SPACE_REGEX, '', s_text)
+                    s_text = re.sub(r'[^\w\s]', '', s_text)
                     
                     if end_text_target and (end_text_target in s_text or s_text in end_text_target):
                          final_end_time = transcript_segments[i]['end']
@@ -536,7 +536,7 @@ def process_segments(raw_segments, transcript_segments, min_duration, max_durati
     all_segments = unique_segments
     print(f"[DEBUG] Finished processing. {len(all_segments)} segments valid.")
 
-    if output_count and len(all_segments) > output_count:
+    if isinstance(output_count, int) and output_count > 0 and len(all_segments) > output_count:
         print(f"Filtrando os top {output_count} segmentos de {len(all_segments)} candidatos encontrados nos chunks.")
         all_segments = all_segments[:output_count]
 
@@ -553,8 +553,8 @@ def process_segments(raw_segments, transcript_segments, min_duration, max_durati
     return final_result
 
 
-def create(num_segments, viral_mode, themes, tempo_minimo, tempo_maximo, ai_mode="manual", api_key=None, project_folder="tmp", chunk_size_arg=None, model_name_arg=None):  # NOSONAR
-    quantidade_de_virals = num_segments
+def create(num_segments, viral_mode, themes, tempo_minimo, tempo_maximo, ai_mode="manual", api_key=None, project_folder="tmp", chunk_size_arg=None, model_name_arg=None):
+    quantidade_de_virals = num_segments if isinstance(num_segments, int) and num_segments > 0 else None
 
     # 1. Load Transcript
     transcript_segments = load_transcript(project_folder)
@@ -581,7 +581,7 @@ def create(num_segments, viral_mode, themes, tempo_minimo, tempo_maximo, ai_mode
         },
         "copilot": {
             "github_token": "",
-            "model": "claude-3-5-sonnet-20241022",
+            "model": DEFAULT_COPILOT_MODEL,
             "chunk_size": 10000
         }
     }
@@ -617,7 +617,7 @@ def create(num_segments, viral_mode, themes, tempo_minimo, tempo_maximo, ai_mode
     elif ai_mode == "copilot":
         cfg_chunk = config["copilot"].get("chunk_size", 10000)
         current_chunk_size = chunk_size_arg if chunk_size_arg and int(chunk_size_arg) > 0 else cfg_chunk
-        cfg_model = config["copilot"].get("model", "claude-3-5-sonnet-20241022")
+        cfg_model = config["copilot"].get("model", DEFAULT_COPILOT_MODEL)
         model_name = model_name_arg if model_name_arg else cfg_model
         if not api_key: api_key = config["copilot"].get("github_token", "")
 
@@ -685,10 +685,12 @@ OUTPUT JSON ONLY:
         else:
             start = next_start
 
+    amount_text = str(quantidade_de_virals) if quantidade_de_virals else "as many as possible"
+
     if viral_mode:
-        virality_instruction = f"""analyze the segment for potential virality and identify {quantidade_de_virals} most viral segments from the transcript"""
+        virality_instruction = f"""analyze the segment for potential virality and identify {amount_text} most viral segments from the transcript"""
     else:
-        virality_instruction = f"""analyze the segment for potential virality and identify {quantidade_de_virals} the best parts based on the list of themes {themes}."""
+        virality_instruction = f"""analyze the segment for potential virality and identify {amount_text} the best parts based on the list of themes {themes}."""
 
     output_texts = []
     for i, chunk in enumerate(chunks):
@@ -704,7 +706,7 @@ OUTPUT JSON ONLY:
                 max_duration=tempo_maximo,
                 transcript_chunk=chunk,
                 json_template=json_template,
-                amount=quantidade_de_virals
+                amount=amount_text
             )
         except KeyError as e:
             prompt = system_prompt_template
@@ -714,12 +716,15 @@ OUTPUT JSON ONLY:
             prompt = prompt.replace("{max_duration}", str(tempo_maximo))
             prompt = prompt.replace("{transcript_chunk}", chunk)
             prompt = prompt.replace("{json_template}", json_template)
-            prompt = prompt.replace("{amount}", str(quantidade_de_virals))
+            prompt = prompt.replace("{amount}", amount_text)
 
         output_texts.append(prompt)
 
+    prompt_debug_folder = os.path.join(project_folder, "prompts")
+    os.makedirs(prompt_debug_folder, exist_ok=True)
+
     try:
-        full_prompt_path = os.path.join(project_folder, "prompt_full.txt")
+        full_prompt_path = os.path.join(prompt_debug_folder, "prompt_full.txt")
         full_prompt = system_prompt_template
         full_prompt = full_prompt.replace("{context_instruction}", "Full Video Transcript Analysis")
         full_prompt = full_prompt.replace("{virality_instruction}", virality_instruction)
@@ -727,7 +732,7 @@ OUTPUT JSON ONLY:
         full_prompt = full_prompt.replace("{max_duration}", str(tempo_maximo))
         full_prompt = full_prompt.replace("{transcript_chunk}", content) 
         full_prompt = full_prompt.replace("{json_template}", json_template)
-        full_prompt = full_prompt.replace("{amount}", str(quantidade_de_virals))
+        full_prompt = full_prompt.replace("{amount}", amount_text)
         
         with open(full_prompt_path, "w", encoding="utf-8") as f:
             f.write(full_prompt)
@@ -767,7 +772,12 @@ OUTPUT JSON ONLY:
 
     elif ai_mode == "copilot":
         if not HAS_COPILOT:
-            print("Error: anthropic library not installed. Please install it with: pip install anthropic>=0.28.0")
+            print(
+                "Error: GitHub Copilot provider not available. "
+                "Check scripts/github_copilot_provider.py and install github-copilot-sdk."
+            )
+            if COPILOT_IMPORT_ERROR:
+                print(f"[DEBUG] Copilot provider import error: {COPILOT_IMPORT_ERROR}")
             return {"segments": []}
         
         if not api_key or not api_key.strip():
@@ -776,7 +786,7 @@ OUTPUT JSON ONLY:
 
     for i, prompt in enumerate(output_texts):
         response_text = ""
-        manual_prompt_path = os.path.join(project_folder, f"prompt_part_{i+1}.txt")
+        manual_prompt_path = os.path.join(prompt_debug_folder, f"prompt_part_{i+1}.txt")
         try:
             with open(manual_prompt_path, "w", encoding="utf-8") as f:
                 f.write(prompt)
@@ -813,7 +823,7 @@ OUTPUT JSON ONLY:
                     try:
                         rest = sys.stdin.read() 
                         response_text += rest
-                    except Exception:
+                    except:
                         pass
 
         elif ai_mode == "gemini":
@@ -824,7 +834,62 @@ OUTPUT JSON ONLY:
             response_text = call_g4f(prompt, model_name=model_name)
         elif ai_mode == "copilot":
             print(f"Enviando chunk {i+1} para o GitHub Copilot (Model: {model_name})...")
-            response_text = call_copilot(prompt, github_token=api_key, model_name=model_name)
+            try:
+                response_text = call_copilot(
+                    prompt,
+                    github_token=api_key,
+                    model_name=model_name,
+                )
+            except Exception as e:
+                error_str = str(e)
+                print(f"[ERROR] GitHub Copilot API error: {error_str}")
+
+                if "model" in error_str.lower() and "not available" in error_str.lower():
+                    fallback_candidates = [
+                        "claude*sonnet*",
+                        "gpt*",
+                        "gemini*",
+                        "raptor*",
+                    ]
+                    print(
+                        f"[WARN] Modelo '{model_name}' indisponível no Copilot. "
+                        f"Tentando fallback por curinga/lista: {fallback_candidates}"
+                    )
+
+                    fallback_ok = False
+                    for fallback_model in fallback_candidates:
+                        if fallback_model == model_name:
+                            continue
+                        try:
+                            response_text = call_copilot(
+                                prompt,
+                                github_token=api_key,
+                                model_name=fallback_model,
+                            )
+                            model_name = fallback_model
+                            fallback_ok = True
+                            print(f"[INFO] Fallback de modelo aplicado: {model_name}")
+                            break
+                        except Exception as retry_error:
+                            print(f"[WARN] Fallback '{fallback_model}' falhou: {retry_error}")
+
+                    if not fallback_ok:
+                        print(
+                            "[ERROR] Nenhum fallback de modelo funcionou. "
+                            "Verifique acesso ao Copilot e modelos habilitados."
+                        )
+                        return {"segments": []}
+                elif "token invalid" in error_str.lower() or "expired" in error_str.lower() or "401" in error_str:
+                    print("[ERROR] GitHub token invalid or expired for Copilot SDK.")
+                    return {"segments": []}
+                elif "scope" in error_str.lower() or "forbidden" in error_str.lower() or "403" in error_str:
+                    print("[ERROR] GitHub token lacks permissions for Copilot SDK.")
+                    return {"segments": []}
+                elif "rate limited" in error_str.lower() or "429" in error_str:
+                    print("[ERROR] GitHub Copilot API rate limited. Try again later.")
+                    return {"segments": []}
+                else:
+                    return {"segments": []}
         elif ai_mode == "local" and local_llm_instance:
             print(f"Processing chunk {i+1} with Local LLM...")
             try:
@@ -857,7 +922,7 @@ OUTPUT JSON ONLY:
             print(f"Encontrados {len(chunk_segments)} segmentos neste chunk.")
             all_raw_segments.extend(chunk_segments)
         except json.JSONDecodeError:
-            print("Erro: Resposta inválida.")
+            print(f"Erro: Resposta inválida.")
         except Exception as e:
             print(f"Erro desconhecido ao processar chunk: {e}")
 

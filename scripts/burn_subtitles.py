@@ -1,6 +1,7 @@
 import os
 import subprocess
 import sys
+import json
 
 # sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
@@ -68,8 +69,26 @@ def burn(project_folder="tmp"):
         print(f"Pasta de vídeos finais não encontrada: {videos_folder}")
         return
 
+    expected_video_basenames = None
+    viral_segments_path = os.path.join(project_folder_abs, "viral_segments.txt")
+    if os.path.exists(viral_segments_path):
+        try:
+            with open(viral_segments_path, "r", encoding="utf-8") as vf:
+                viral_data = json.load(vf)
+            segments = viral_data.get("segments", [])
+            if segments:
+                expected_video_basenames = set()
+                for idx, segment in enumerate(segments):
+                    title = segment.get("title", f"Segment_{idx}")
+                    safe_title = "".join([c for c in title if c.isalnum() or c in " _-"]).strip()
+                    safe_title = safe_title.replace(" ", "_")[:60]
+                    expected_video_basenames.add(f"{idx:03d}_{safe_title}")
+                    expected_video_basenames.add(f"final-output{idx:03d}_processed")
+        except Exception as e:
+            print(f"Aviso: falha ao ler viral_segments.txt para filtrar burn: {e}")
+
     # Itera sobre os arquivos de vídeo na pasta final
-    files = os.listdir(videos_folder)
+    files = sorted(os.listdir(videos_folder))
     if not files:
         print("Nenhum arquivo encontrado em 'final' para queimar legendas.")
         return
@@ -82,6 +101,10 @@ def burn(project_folder="tmp"):
 
             # Extrai o nome base do vídeo (sem extensão)
             video_name = os.path.splitext(video_file)[0]
+
+            if expected_video_basenames is not None and video_name not in expected_video_basenames:
+                print(f"Ignorando arquivo extra em final: {video_file}")
+                continue
             
             # Define o caminho para a legenda correspondente
             subtitle_file = os.path.join(subs_folder, f"{video_name}.ass")

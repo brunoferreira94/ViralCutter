@@ -6,11 +6,85 @@ import json
 def cut(segments, project_folder="tmp", skip_video=False):
 
     def check_nvenc_support():
-        # ... (unchanged)
+        # Primeiro valida presença do encoder no binário.
         try:
-            result = subprocess.run(["ffmpeg", "-encoders"], capture_output=True, text=True)
-            return "h264_nvenc" in result.stdout
-        except subprocess.CalledProcessError:
+            result = subprocess.run(
+                ["ffmpeg", "-encoders"],
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            if "h264_nvenc" not in result.stdout:
+                return False
+
+            # Depois valida execução real (container CPU pode listar NVENC sem GPU disponível).
+            probe_cmd = [
+                "ffmpeg",
+                "-y",
+                "-loglevel", "error",
+                "-hide_banner",
+                "-f", "lavfi",
+                "-i", "color=c=black:s=16x16:d=0.1",
+                "-frames:v", "1",
+                "-c:v", "h264_nvenc",
+                "-f", "null",
+                "-",
+            ]
+            probe = subprocess.run(probe_cmd, capture_output=True, text=True, check=False)
+            return probe.returncode == 0
+        except Exception:
+            return False
+
+    def _build_ffmpeg_command(input_file, output_path, start_time_str, duration_str, video_codec):
+        command = [
+            "ffmpeg",
+            "-y",
+            "-loglevel", "error", "-hide_banner",
+            "-ss", start_time_str,
+            "-i", input_file,
+            "-t", duration_str,
+            "-c:v", video_codec,
+        ]
+
+        if video_codec == "h264_nvenc":
+            command.extend([
+                "-preset", "p1",
+                "-b:v", "5M",
+            ])
+        else:
+            command.extend([
+                "-preset", "ultrafast",
+                "-crf", "23",
+            ])
+
+        command.extend([
+            "-c:a", "aac",
+            "-b:a", "128k",
+            output_path,
+        ])
+
+        return command
+
+    def _is_video_valid(path):
+        if not os.path.exists(path):
+            return False
+
+        probe_cmd = [
+            "ffprobe",
+            "-v", "error",
+            "-show_entries", "format=duration",
+            "-of", "default=noprint_wrappers=1:nokey=1",
+            path,
+        ]
+        try:
+            probe = subprocess.run(probe_cmd, capture_output=True, text=True, check=False)
+            if probe.returncode != 0:
+                return False
+
+            raw_duration = (probe.stdout or "").strip()
+            duration = float(raw_duration)
+            return duration > 0
+        except Exception:
             return False
 
     def generate_segments(response, project_folder, skip_video):
@@ -105,42 +179,57 @@ def cut(segments, project_folder="tmp", skip_video=False):
             # print(f"Executing command: {' '.join(command)}")
 
             # VIDEO GENERATION
-            if not skip_video:
-                # Comando ffmpeg
-                command = [
-                    "ffmpeg",
-                    "-y",
-                    "-loglevel", "error", "-hide_banner",
-                    "-ss", start_time_str,
-                    "-i", input_file,
-                    "-t", duration_str,
-                    "-c:v", video_codec
-                ]
+            needs_render = not skip_video or not _is_video_valid(output_path)
 
-                if video_codec == "h264_nvenc":
-                    command.extend([
-                        "-preset", "p1",
-                        "-b:v", "5M",
-                    ])
-                else:
-                    command.extend([
-                        "-preset", "ultrafast",
-                        "-crf", "23"
-                    ])
-
-                command.extend([
-                    "-c:a", "aac",
-                    "-b:a", "128k",
-                    output_path
-                ])
-
+            if needs_render:
+                if skip_video:
+                    print(
+                        f"Arquivo existente ausente/corrompido. Recriando: {output_filename}"
+                    )
+                command = _build_ffmpeg_command(
+                    input_file=input_file,
+                    output_path=output_path,
+                    start_time_str=start_time_str,
+                    duration_str=duration_str,
+                    video_codec=video_codec,
+                )
                 try:
                     subprocess.run(command, check=True, capture_output=True, text=True)
                     if os.path.exists(output_path):
                         file_size = os.path.getsize(output_path)
                         print(f"Generated segment: {output_filename}, Size: {file_size} bytes")
                 except subprocess.CalledProcessError as e:
-                    print(f"Error executing ffmpeg: {e}")
+                    stderr_msg = (e.stderr or "").strip()
+                    if video_codec == "h264_nvenc":
+                        print(
+                            "NVENC falhou em runtime. Fazendo fallback para libx264 "
+                            "neste e nos próximos segmentos."
+                        )
+                        video_codec = "libx264"
+                        retry_cmd = _build_ffmpeg_command(
+                            input_file=input_file,
+                            output_path=output_path,
+                            start_time_str=start_time_str,
+                            duration_str=duration_str,
+                            video_codec=video_codec,
+                        )
+                        try:
+                            subprocess.run(retry_cmd, check=True, capture_output=True, text=True)
+                            if os.path.exists(output_path):
+                                file_size = os.path.getsize(output_path)
+                                print(
+                                    f"Generated segment with fallback: {output_filename}, "
+                                    f"Size: {file_size} bytes"
+                                )
+                        except subprocess.CalledProcessError as retry_error:
+                            retry_stderr = (retry_error.stderr or "").strip()
+                            print(f"Error executing ffmpeg with fallback: {retry_error}")
+                            if retry_stderr:
+                                print(f"FFmpeg stderr (fallback): {retry_stderr}")
+                    else:
+                        print(f"Error executing ffmpeg: {e}")
+                        if stderr_msg:
+                            print(f"FFmpeg stderr: {stderr_msg}")
             else:
                 print(f"Skipping video generation for {output_filename} (using existing). check json...")
             

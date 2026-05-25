@@ -41,6 +41,7 @@ prompt_full.txt
 prompt_part_*.txt
 response.json
 response_raw_part_*.txt
+VIRALS/*/prompts/
 
 # Local model artifacts
 models/*.gguf
@@ -49,5 +50,9 @@ models/*.gguf
 .env
 .env.*
 !.env.example
+cookies/
+*cookies*.txt
+copilot_oauth_state.json
 openspec/
 .github/
+api_secrets.json

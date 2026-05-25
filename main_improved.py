@@ -92,21 +92,71 @@ def get_subtitle_config(config_path=None):
 def load_api_config(config_path=None):
     if not config_path:
         config_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'api_config.json')
+    config = {}
     if os.path.exists(config_path):
         try:
             with open(config_path, 'r', encoding='utf-8') as f:
-                return json.load(f)
+                config = json.load(f)
+        except Exception:
+            config = {}
+
+    # Also load secrets overlay (not committed) from api_secrets.json
+    secrets_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'api_secrets.json')
+    if os.path.exists(secrets_path):
+        try:
+            with open(secrets_path, 'r', encoding='utf-8') as sf:
+                secrets = json.load(sf)
+            for section, values in secrets.items():
+                if not isinstance(values, dict):
+                    continue
+                sec = config.setdefault(section, {})
+                for k, v in values.items():
+                    if v:
+                        sec[k] = v
         except Exception:
             pass
-    return {}
+
+    return config
 
 
 def save_api_config(config, config_path=None):
     if not config_path:
         config_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'api_config.json')
+    # Separate tokens into api_secrets.json to avoid committing them
+    secrets_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'api_secrets.json')
     try:
+        # Extract secret fields if present and move to secrets file
+        secrets = {}
+        if os.path.exists(secrets_path):
+            try:
+                with open(secrets_path, 'r', encoding='utf-8') as sf:
+                    secrets = json.load(sf) or {}
+            except Exception:
+                secrets = {}
+
+        # Known secret keys
+        for section in ['copilot', 'gemini', 'g4f', 'local']:
+            sec = config.get(section, {})
+            if not isinstance(sec, dict):
+                continue
+            # Move possible token fields
+            if 'github_token' in sec:
+                val = sec.pop('github_token')
+                if val:
+                    secrets.setdefault(section, {})['github_token'] = val
+
+        # Write back api_config.json without secrets
         with open(config_path, 'w', encoding='utf-8') as f:
             json.dump(config, f, indent=4, ensure_ascii=False)
+
+        # Persist secrets
+        try:
+            with open(secrets_path, 'w', encoding='utf-8') as sf:
+                json.dump(secrets, sf, indent=4, ensure_ascii=False)
+        except Exception:
+            # if secrets cannot be written, ignore and continue
+            pass
+
         return True
     except Exception as e:
         print(i18n("Error saving api_config.json: {} ").format(e))
@@ -168,7 +218,7 @@ def main():
     parser.add_argument("--skip-prompts", action="store_true", help="Skip interactive prompts and use defaults/existing files")
     parser.add_argument("--video-quality", choices=["best", "1080p", "720p", "480p"], default="best", help="Video download quality")
     parser.add_argument("--skip-youtube-subs", action="store_true", help="Skip downloading YouTube subtitles")
-    parser.add_argument("--translate-target", help="Target language code for subtitle translation (e.g. 'pt', 'en').")
+    parser.add_argument("--translate-target", default="pt-BR", help="Target language code for subtitle translation (e.g. 'pt-BR', 'pt', 'en'). Use 'none' to disable.")
 
     args = parser.parse_args()
     
@@ -246,13 +296,14 @@ def main():
     # -------------------------------------------------------------------------
     viral_segments = None
     project_folder_anticipated = None
+    auto_max_segments = args.segments is not None and args.segments <= 0
 
     if input_video:
         # Se já temos o vídeo, podemos deduzir a pasta
         project_folder_anticipated = os.path.dirname(input_video)
         viral_segments_file = os.path.join(project_folder_anticipated, "viral_segments.txt")
         
-        if os.path.exists(viral_segments_file):
+        if os.path.exists(viral_segments_file) and not auto_max_segments:
              print(i18n("\nExisting viral segments found: {}").format(viral_segments_file))
              if args.skip_prompts:
                  use_existing_json = 'yes'
@@ -280,12 +331,14 @@ def main():
     
     if not viral_segments:
         num_segments = args.segments
-        if not num_segments:
+        if num_segments is None:
             if args.skip_prompts:
                 print(i18n("No segments count provided and skip-prompts is ON. Using default 3."))
                 num_segments = 3
             else:
                 num_segments = interactive_input_int("Enter the number of viral segments to create: ")
+        elif num_segments <= 0:
+            print(i18n("Segments set to 0 or less: using automatic mode (maximum segments found)."))
 
         viral_mode = args.viral
         if not args.viral and not args.themes:
@@ -425,8 +478,8 @@ def main():
                          api_config["copilot"]["model"] = args.ai_model_name
                      if args.chunk_size:
                          api_config["copilot"]["chunk_size"] = args.chunk_size
-                     if save_api_config(api_config, config_path):
-                         print(i18n("GitHub Copilot token saved to api_config.json."))
+                    if save_api_config(api_config, config_path):
+                        print(i18n("GitHub Copilot token saved to secure local storage."))
 
         if ai_backend == "copilot" and api_key:
              cfg_key = api_config.get("copilot", {}).get("github_token", "")
@@ -439,7 +492,7 @@ def main():
                      api_config["copilot"]["chunk_size"] = args.chunk_size
                  api_config["selected_api"] = "copilot"
                  if save_api_config(api_config, config_path):
-                     print(i18n("GitHub Copilot token saved to api_config.json."))
+                     print(i18n("GitHub Copilot token saved to secure local storage."))
 
     # Workflow & Face Config Inputs
     workflow_choice = args.workflow
@@ -525,7 +578,7 @@ def main():
             if not viral_segments:
                 # Checagem tardia para downloads novos que por acaso ja tenham json (Ex: URL repetida)
                 viral_segments_file_late = os.path.join(project_folder, "viral_segments.txt")
-                if os.path.exists(viral_segments_file_late):
+                if os.path.exists(viral_segments_file_late) and not auto_max_segments:
                     print(i18n("Found existing viral segments file at {}").format(viral_segments_file_late))
                     if args.skip_prompts:
                         print(i18n("Skipping prompts enabled. Loading existing segments."))
@@ -602,6 +655,37 @@ def main():
         else:
             cuts_folder = os.path.join(project_folder, "cuts")
             skip_cutting = False
+
+            def _is_video_valid(path):
+                if not os.path.exists(path):
+                    return False
+                probe_cmd = [
+                    "ffprobe",
+                    "-v", "error",
+                    "-show_entries", "format=duration",
+                    "-of", "default=noprint_wrappers=1:nokey=1",
+                    path,
+                ]
+                try:
+                    probe = subprocess.run(probe_cmd, capture_output=True, text=True, check=False)
+                    if probe.returncode != 0:
+                        return False
+                    return float((probe.stdout or "").strip()) > 0
+                except Exception:
+                    return False
+
+            if args.skip_prompts and viral_segments and viral_segments.get("segments"):
+                expected_cut_paths = []
+                for idx, segment in enumerate(viral_segments.get("segments", [])):
+                    title = segment.get("title", f"Segment_{idx}")
+                    safe_title = "".join([c for c in title if c.isalnum() or c in " _-"]).strip()
+                    safe_title = safe_title.replace(" ", "_")[:60]
+                    expected_cut_paths.append(os.path.join(cuts_folder, f"{idx:03d}_{safe_title}_original_scale.mp4"))
+
+                invalid_cuts = [path for path in expected_cut_paths if not _is_video_valid(path)]
+                if invalid_cuts:
+                    print(i18n("Detected missing/corrupted cuts. Recutting before edit..."))
+                    skip_cutting = False
             
             if os.path.exists(cuts_folder) and os.listdir(cuts_folder):
                 print(i18n("\nExisting cuts found in: {}").format(cuts_folder))
@@ -707,11 +791,11 @@ def main():
             
             # --- Translation Integration ---
             if args.translate_target and args.translate_target.lower() != "none":
-                 print(i18n("Translating subtitles to: {}").format(args.translate_target))
-                 import asyncio
-                 try:
+                print(i18n("Translating subtitles to: {} (effective translator target: {})").format(args.translate_target, "pt" if args.translate_target.lower() in ["pt-br", "pt_br"] else args.translate_target))
+                import asyncio
+                try:
                     asyncio.run(translate_json.translate_project_subs(project_folder, args.translate_target))
-                 except Exception as e:
+                except Exception as e:
                     print(i18n("Translation failed: {}").format(e))
             # -------------------------------
 

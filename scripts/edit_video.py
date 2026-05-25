@@ -16,6 +16,26 @@ except ImportError:
 # Global cache for encoder
 CACHED_ENCODER = None
 
+
+def _encoder_runtime_works(encoder_name):
+    try:
+        probe_cmd = [
+            'ffmpeg',
+            '-y',
+            '-loglevel', 'error',
+            '-hide_banner',
+            '-f', 'lavfi',
+            '-i', 'color=c=black:s=16x16:d=0.1',
+            '-frames:v', '1',
+            '-c:v', encoder_name,
+            '-f', 'null',
+            '-',
+        ]
+        result = subprocess.run(probe_cmd, capture_output=True, text=True, check=False)
+        return result.returncode == 0
+    except Exception:
+        return False
+
 def get_best_encoder():
     global CACHED_ENCODER
     if CACHED_ENCODER: return CACHED_ENCODER
@@ -26,26 +46,26 @@ def get_best_encoder():
         output = result.stdout
         
         # Priority: NVENC (NVIDIA) > AMF (AMD) > QSV (Intel) > CPU
-        if "h264_nvenc" in output:
+        if "h264_nvenc" in output and _encoder_runtime_works("h264_nvenc"):
             print("Encoder Detected: NVIDIA (h264_nvenc)")
-            CACHED_ENCODER = ("h264_nvenc", "fast") # p1-p7 presets could be used but 'fast' maps well
+            CACHED_ENCODER = ("h264_nvenc", "fast")
             return CACHED_ENCODER
-        
-        if "h264_amf" in output:
+
+        if "h264_amf" in output and _encoder_runtime_works("h264_amf"):
             print("Encoder Detected: AMD (h264_amf)")
-            CACHED_ENCODER = ("h264_amf", "speed") # quality, speed, balanced
+            CACHED_ENCODER = ("h264_amf", "speed")
             return CACHED_ENCODER
-            
-        if "h264_qsv" in output:
-             print("Encoder Detected: Intel QSV (h264_qsv)")
-             CACHED_ENCODER = ("h264_qsv", "veryfast")
-             return CACHED_ENCODER
-             
+
+        if "h264_qsv" in output and _encoder_runtime_works("h264_qsv"):
+            print("Encoder Detected: Intel QSV (h264_qsv)")
+            CACHED_ENCODER = ("h264_qsv", "veryfast")
+            return CACHED_ENCODER
+
         # Mac OS (VideoToolbox)
-        if "h264_videotoolbox" in output:
-             print("Encoder Detected: MacOS (h264_videotoolbox)")
-             CACHED_ENCODER = ("h264_videotoolbox", "default")
-             return CACHED_ENCODER
+        if "h264_videotoolbox" in output and _encoder_runtime_works("h264_videotoolbox"):
+            print("Encoder Detected: MacOS (h264_videotoolbox)")
+            CACHED_ENCODER = ("h264_videotoolbox", "default")
+            return CACHED_ENCODER
 
     except Exception as e:
         print(f"Error checking encoders: {e}")
@@ -1142,7 +1162,24 @@ def edit(project_folder="tmp", face_model="insightface", face_mode="auto", detec
     # mp_num_faces = 2 if face_mode == "2" else 1  
 
     import glob
-    found_files = sorted(glob.glob(os.path.join(cuts_folder, "*_original_scale.mp4")))
+    all_cut_files = sorted(glob.glob(os.path.join(cuts_folder, "*_original_scale.mp4")))
+
+    expected_files = []
+    if segments_data:
+        for idx, segment in enumerate(segments_data):
+            title = segment.get("title", f"Segment_{idx}")
+            safe_title = "".join([c for c in title if c.isalnum() or c in " _-"]).strip()
+            safe_title = safe_title.replace(" ", "_")[:60]
+            base_name = f"{idx:03d}_{safe_title}"
+            expected_files.append(os.path.join(cuts_folder, f"{base_name}_original_scale.mp4"))
+
+    if expected_files:
+        found_files = [f for f in expected_files if os.path.exists(f)]
+        missing_expected = [f for f in expected_files if not os.path.exists(f)]
+        if missing_expected:
+            print(f"WARNING: {len(missing_expected)} cuts esperados não encontrados na pasta cuts.")
+    else:
+        found_files = all_cut_files
 
     if not found_files:
         print(f"No files found in {cuts_folder}.")

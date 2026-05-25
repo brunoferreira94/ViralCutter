@@ -6,6 +6,13 @@ from typing import Tuple
 
 ROOT_DIR = Path(__file__).resolve().parent
 ENV_FILE = ROOT_DIR / ".env"
+DEFAULT_COPILOT_MODEL = "claude*sonnet*"
+COPILOT_MODELS = [
+    "claude*sonnet*",
+    "gpt*",
+    "gemini*",
+    "raptor*",
+]
 
 
 def _safe_getenv(name: str, default: str = "") -> str:
@@ -63,14 +70,16 @@ def build_app_config() -> AppConfig:
     return AppConfig(
         root_dir=ROOT_DIR,
         env_file=ENV_FILE,
-        viralcutter_host=_safe_getenv("VIRALCUTTER_HOST", "127.0.0.1"),
+        viralcutter_host=_safe_getenv("VIRALCUTTER_HOST", "0.0.0.0"),
         ort_logging_level=_safe_getenv("ORT_LOGGING_LEVEL", "3"),
         tf_cpp_min_log_level=_safe_getenv("TF_CPP_MIN_LOG_LEVEL", "3"),
         copilot_github_token=_safe_getenv("COPILOT_GITHUB_TOKEN"),
         gh_token=_safe_getenv("GH_TOKEN"),
         github_token=_safe_getenv("GITHUB_TOKEN"),
         copilot_oauth_client_id=_safe_getenv("COPILOT_OAUTH_CLIENT_ID"),
-        copilot_oauth_client_secret=_safe_getenv("COPILOT_OAUTH_CLIENT_SECRET"),
+        copilot_oauth_client_secret=_safe_getenv(
+            "COPILOT_OAUTH_CLIENT_SECRET"
+        ),
     )
 
 

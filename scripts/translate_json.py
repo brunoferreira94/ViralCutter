@@ -21,6 +21,12 @@ separator = " ◌ "
 separator_unjoin = separator.replace(' ', '')
 chunk_max_chars = 4999
 
+def _normalize_target_lang(target_lang):
+    normalized = (target_lang or "").strip()
+    if normalized.lower() in {"pt-br", "pt_br"}:
+        return "pt"
+    return normalized
+
 def substituir_texto(text, substituicoes):
     """Função para substituir texto."""
     for old, new in substituicoes.items():
@@ -30,7 +36,7 @@ def substituir_texto(text, substituicoes):
 async def translate_chunk(index, chunk, target_lang):
     while True:
         try:
-            translator = GoogleTranslator(source='auto', target=target_lang)
+            translator = GoogleTranslator(source='auto', target=_normalize_target_lang(target_lang))
             translated_chunk = await asyncio.get_event_loop().run_in_executor(None, translator.translate, chunk)
             await asyncio.sleep(0)
 
@@ -280,7 +286,8 @@ async def translate_project_subs(project_folder: str, target_lang: str):
         print("No subtitle files found to translate.")
         return
 
-    print(f"Found {len(json_files)} subtitle files to translate to '{target_lang}'...")
+    normalized_target_lang = _normalize_target_lang(target_lang)
+    print(f"Found {len(json_files)} subtitle files to translate to '{target_lang}' (normalized: '{normalized_target_lang}')...")
 
     for json_file in json_files:
         # Backup logic
@@ -304,17 +311,17 @@ async def translate_project_subs(project_folder: str, target_lang: str):
         # effectively replacing the file read by the next step
         print(f"Translating {source_file.name} -> {json_file.name} ({target_lang})...")
         try:
-            await translate_json_file(source_file, json_file, target_lang)
+            await translate_json_file(source_file, json_file, normalized_target_lang)
             
             # Apply language specific substitutions if any
-            if target_lang in substituicoes_por_idioma:
+            if normalized_target_lang in substituicoes_por_idioma:
                  with open(json_file, 'r', encoding='utf-8') as f:
                      data = json.load(f)
                  
                  modified = False
                  for segment in data.get('segments', []):
                     # Text
-                    new_text = substituir_texto(segment['text'], substituicoes_por_idioma[target_lang])
+                    new_text = substituir_texto(segment['text'], substituicoes_por_idioma[normalized_target_lang])
                     if new_text != segment['text']:
                         segment['text'] = new_text
                         modified = True
@@ -322,7 +329,7 @@ async def translate_project_subs(project_folder: str, target_lang: str):
                     # Words
                     for word in segment.get('words', []):
                         w_text = word.get('word', '')
-                        new_w_text = substituir_texto(w_text, substituicoes_por_idioma[target_lang])
+                        new_w_text = substituir_texto(w_text, substituicoes_por_idioma[normalized_target_lang])
                         if new_w_text != w_text:
                             word['word'] = new_w_text
                             modified = True

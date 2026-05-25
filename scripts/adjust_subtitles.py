@@ -108,6 +108,17 @@ def generate_ass_from_file(input_path, output_path, project_folder,
             words = segment.get('words', [])
             total_words = len(words)
 
+            if total_words == 0:
+                text = (segment.get('text') or '').strip()
+                start_sec = segment.get('start', 0)
+                end_sec = segment.get('end', start_sec)
+                if text and end_sec >= start_sec:
+                    start_time_ass = format_time_ass(start_sec)
+                    end_time_ass = format_time_ass(end_sec)
+                    f.write(f"Dialogue: 0,{start_time_ass},{end_time_ass},Default,,0,0,0,,{text}\n")
+                    total_lines_written += 1
+                continue
+
             i = 0
             while i < total_words:
                 block = []

@@ -8,6 +8,7 @@ import psutil
 import shutil
 import datetime
 import time
+import webbrowser
 from fastapi import FastAPI
 from fastapi.staticfiles import StaticFiles
 import uvicorn
@@ -16,6 +17,7 @@ import re
 import library  # Module for Library Logic
 import subtitle_handler as subs  # Module for Subtitles
 import subtitle_editor as editor  # Module for Editor Logic
+from scripts import copilot_oauth
 
 # Path to the main script
 MAIN_SCRIPT_PATH = os.path.join(
@@ -24,7 +26,7 @@ MAIN_SCRIPT_PATH = os.path.join(
 WORKING_DIR = os.path.dirname(MAIN_SCRIPT_PATH)
 sys.path.append(WORKING_DIR)
 
-from config import initialize_environment  # noqa: E402
+from config import COPILOT_MODELS, DEFAULT_COPILOT_MODEL, initialize_environment  # noqa: E402
 
 from i18n.i18n import I18nAuto  # noqa: E402
 i18n = I18nAuto()
@@ -57,6 +59,7 @@ if not os.path.exists(MODELS_DIR):
 
 # Global variables
 current_process = None
+copilot_oauth_pending = {}
 
 DEBUG_COLORS_LOG = "debug_colors.log"
 TEMP_SUBTITLE_CONFIG = "temp_subtitle_config.json"
@@ -67,6 +70,8 @@ WORKFLOW_MAP = {"Full": "1", "Cut Only": "2", "Subtitles Only": "3"}  # NOSONAR
 START_PROCESSING_LABEL = "Start Processing"
 SELECT_PROJECT_LABEL = "Select Project"
 API_KEY_LABEL = "API Key"
+COPILOT_OAUTH_STATE_FILE = os.path.join(WORKING_DIR, "copilot_oauth_state.json")
+PROVIDER_CONFIG_SAVED_MSG = "Provider configuration saved."
 
 # Helpers
 def _debug_color_log(message):
@@ -165,14 +170,6 @@ G4F_MODELS = [
     'qwen-2.5-72b'
 ]
 
-COPILOT_MODELS = [
-    'claude-3-5-sonnet-20241022',
-    'claude-3-opus-20240229',
-    'claude-3-sonnet-20240229',
-    'claude-3-haiku-20240307'
-]
-
-
 def _resolve_provider_defaults(config):
     selected_api = config.get('selected_api', 'gemini')
     if selected_api == 'gemini':
@@ -192,7 +189,7 @@ def _resolve_provider_defaults(config):
             i18n('GitHub Token'),
             section.get('github_token', ''),
             COPILOT_MODELS,
-            section.get('model', COPILOT_MODELS[0]),
+            section.get('model', DEFAULT_COPILOT_MODEL),
             section.get('chunk_size', 10000),
         )
     if selected_api == 'g4f':
@@ -229,15 +226,40 @@ def get_api_config_path():
     return os.path.join(WORKING_DIR, "api_config.json")
 
 
+def get_api_secrets_path():
+    # Separate file for secrets (not committed)
+    return os.path.join(WORKING_DIR, "api_secrets.json")
+
+
 def load_api_config():
     config_path = get_api_config_path()
+    config = {}
     if os.path.exists(config_path):
         try:
             with open(config_path, 'r', encoding='utf-8') as f:
-                return json.load(f)
+                config = json.load(f)
+        except Exception:
+            config = {}
+
+    # Load secrets overlay (tokens) from a local secrets file not tracked by git
+    secrets_path = get_api_secrets_path()
+    if os.path.exists(secrets_path):
+        try:
+            with open(secrets_path, 'r', encoding='utf-8') as sf:
+                secrets = json.load(sf)
+            # Merge secret fields into config (only for top-level sections)
+            for section, values in secrets.items():
+                if not isinstance(values, dict):
+                    continue
+                sec = config.setdefault(section, {})
+                for k, v in values.items():
+                    # Only override if value is truthy
+                    if v:
+                        sec[k] = v
         except Exception:
             pass
-    return {}
+
+    return config
 
 
 def save_api_config(selected_api, api_key, ai_model_name, chunk_size):
@@ -260,8 +282,23 @@ def save_api_config(selected_api, api_key, ai_model_name, chunk_size):
     if section_name:
         section = config.setdefault(section_name, {})
         key_field = api_key_field_by_api.get(selected_api)
+        # Secrets (tokens) are stored in a separate local file to avoid committing them to git
+        secrets_path = get_api_secrets_path()
         if key_field and api_key:
-            section[key_field] = api_key
+            # update in-memory config for immediate UI feedback, but persist token in secrets file
+            section.pop(key_field, None)
+            try:
+                secrets = {}
+                if os.path.exists(secrets_path):
+                    with open(secrets_path, 'r', encoding='utf-8') as sf:
+                        secrets = json.load(sf) or {}
+                sec = secrets.setdefault(section_name, {})
+                sec[key_field] = api_key
+                with open(secrets_path, 'w', encoding='utf-8') as sf:
+                    json.dump(secrets, sf, indent=4, ensure_ascii=False)
+            except Exception:
+                # fallback: keep in config file if secrets file cannot be written
+                section[key_field] = api_key
         if ai_model_name:
             section['model'] = ai_model_name
         if chunk_size:
@@ -270,7 +307,7 @@ def save_api_config(selected_api, api_key, ai_model_name, chunk_size):
     try:
         with open(config_path, 'w', encoding='utf-8') as f:
             json.dump(config, f, indent=4, ensure_ascii=False)
-        return i18n("Provider configuration saved.")
+        return i18n(PROVIDER_CONFIG_SAVED_MSG)
     except Exception as e:
         return i18n("Error saving configuration: {} ").format(e)
 
@@ -283,8 +320,141 @@ def mask_secret(secret):
     return f"{secret[:4]}...{secret[-4:]}"
 
 
+def _persist_copilot_oauth_state(state):
+    if not state:
+        return
+    payload = {
+        "device_code": state.get("device_code", ""),
+        "user_code": state.get("user_code", ""),
+        "verification_uri": state.get("verification_uri", ""),
+        "verification_uri_complete": state.get("verification_uri_complete", ""),
+        "expires_in": int(state.get("expires_in", 0) or 0),
+        "interval": int(state.get("interval", 0) or 0),
+        "created_at": int(time.time()),
+    }
+    try:
+        with open(COPILOT_OAUTH_STATE_FILE, "w", encoding="utf-8") as file_handle:
+            json.dump(payload, file_handle, ensure_ascii=False, indent=2)
+    except Exception:
+        pass
+
+
+def _clear_copilot_oauth_state():
+    try:
+        if os.path.exists(COPILOT_OAUTH_STATE_FILE):
+            os.remove(COPILOT_OAUTH_STATE_FILE)
+    except Exception:
+        pass
+
+
+def _load_copilot_oauth_state():
+    if not os.path.exists(COPILOT_OAUTH_STATE_FILE):
+        return {}
+
+    try:
+        with open(COPILOT_OAUTH_STATE_FILE, "r", encoding="utf-8") as file_handle:
+            state = json.load(file_handle)
+    except Exception:
+        return {}
+
+    created_at = int(state.get("created_at", 0) or 0)
+    expires_in = int(state.get("expires_in", 0) or 0)
+    if created_at and expires_in and int(time.time()) > (created_at + expires_in + 5):
+        _clear_copilot_oauth_state()
+        return {}
+
+    if not state.get("device_code"):
+        _clear_copilot_oauth_state()
+        return {}
+
+    return state
+
+
 def open_github_token_page():
-    return i18n("GitHub token creation page opened in browser.")
+    return i18n("GitHub Copilot OAuth setup documentation opened in browser.")
+
+
+def start_copilot_oauth_login(current_api_key):
+    client_id = APP_CONFIG.copilot_oauth_client_id
+    if not client_id:
+        return current_api_key, i18n("Missing COPILOT_OAUTH_CLIENT_ID in environment (.env).")
+
+    try:
+        flow = copilot_oauth.start_device_flow(client_id=client_id)
+        copilot_oauth_pending.clear()
+        copilot_oauth_pending.update(flow)
+        _persist_copilot_oauth_state(flow)
+
+        verification_url = flow.get("verification_uri_complete") or flow.get("verification_uri", "")
+        user_code = flow.get("user_code", "")
+        expires_in = flow.get("expires_in", 0)
+
+        if verification_url:
+            try:
+                webbrowser.open(verification_url)
+            except Exception:
+                pass
+
+        return (
+            current_api_key,
+            i18n("Copilot OAuth started. Open: {} | Code: {} | Expires in: {}s. After authorizing, click Finish Copilot OAuth Login.")
+            .format(verification_url, user_code, expires_in),
+        )
+    except Exception as e:
+        return current_api_key, i18n("Unable to start Copilot OAuth flow: {} ").format(e)
+
+
+def _handle_copilot_oauth_finish_error(current_api_key, error_code, error_description):
+    if error_code == "authorization_pending":
+        return current_api_key, i18n("OAuth authorization is still pending. Complete approval on GitHub and click Finish again.")
+    if error_code == "slow_down":
+        return current_api_key, i18n("OAuth requests are too frequent. Wait a few seconds and click Finish again.")
+    if error_code == "expired_token":
+        copilot_oauth_pending.clear()
+        _clear_copilot_oauth_state()
+        return current_api_key, i18n("OAuth device code expired. Click Start Copilot OAuth Login again.")
+    return current_api_key, i18n("Unable to finish Copilot OAuth flow: {} - {} ").format(error_code, error_description)
+
+
+def finish_copilot_oauth_login(current_api_key):
+    client_id = APP_CONFIG.copilot_oauth_client_id
+    client_secret = APP_CONFIG.copilot_oauth_client_secret
+    if not client_id:
+        return current_api_key, i18n("Missing COPILOT_OAUTH_CLIENT_ID in environment (.env).")
+
+    if (not copilot_oauth_pending or not copilot_oauth_pending.get("device_code")):
+        persisted_state = _load_copilot_oauth_state()
+        if persisted_state:
+            copilot_oauth_pending.clear()
+            copilot_oauth_pending.update(persisted_state)
+
+    if not copilot_oauth_pending or not copilot_oauth_pending.get("device_code"):
+        return current_api_key, i18n("No active OAuth login session. Click Start Copilot OAuth Login first.")
+
+    try:
+        result = copilot_oauth.exchange_device_token(
+            client_id=client_id,
+            device_code=copilot_oauth_pending.get("device_code", ""),
+            client_secret=client_secret,
+        )
+
+        if result.get("status") != "ok":
+            error_code = result.get("error", "unknown_error")
+            error_description = result.get("error_description", "")
+            return _handle_copilot_oauth_finish_error(current_api_key, error_code, error_description)
+
+        token = str(result.get("access_token", "")).strip()
+        if not token:
+            return current_api_key, i18n("OAuth finished without a valid token. Try again.")
+
+        save_status = save_api_config("copilot", token, None, None)
+        copilot_oauth_pending.clear()
+        _clear_copilot_oauth_state()
+        if PROVIDER_CONFIG_SAVED_MSG in save_status:
+            return token, i18n("Copilot OAuth completed and token saved to secure local storage. {} ").format(mask_secret(token))
+        return token, save_status
+    except Exception as e:
+        return current_api_key, i18n("Unexpected error finishing Copilot OAuth: {} ").format(e)
 
 
 def start_github_cli_login():
@@ -312,7 +482,7 @@ def import_github_cli_token():
             return i18n("No token found in GitHub CLI. Run gh auth login --web first.")
 
         status = save_api_config("copilot", token, None, None)
-        return i18n("GitHub token imported from GitHub CLI and saved. {} ").format(mask_secret(token)) if "Provider configuration saved." in status else status
+        return i18n("GitHub token imported from GitHub CLI and saved. {} ").format(mask_secret(token)) if PROVIDER_CONFIG_SAVED_MSG in status else status
     except subprocess.CalledProcessError as e:
         output = e.output.strip() if hasattr(e, 'output') else str(e)
         return i18n("GitHub CLI error: {} ").format(output)
@@ -586,7 +756,7 @@ with gr.Blocks(title=i18n("ViralCutter WebUI"), theme=gr.themes.Default(primary_
                     
                     with gr.Row():
                         video_quality_input = gr.Dropdown(choices=["best", "1080p", "720p", "480p"], label=i18n("Video Quality"), value="best")
-                        translate_input = gr.Dropdown(choices=["None", "pt", "en", "es", "fr", "de", "it", "ru", "ja", "ko", "zh-CN"], label=i18n("Translate Subtitles To"), value="None")
+                        translate_input = gr.Dropdown(choices=["None", "pt-BR", "pt", "en", "es", "fr", "de", "it", "ru", "ja", "ko", "zh-CN"], label=i18n("Translate Subtitles To"), value="pt-BR")
                         use_youtube_subs_input = gr.Checkbox(label=i18n("Use YouTube Subs"), value=True, info=i18n("Download and use official subtitles if available. (Recommended, it speeds up the process)"))
 
                     project_selector = gr.Dropdown(choices=[], label=i18n(SELECT_PROJECT_LABEL), visible=False)
@@ -624,7 +794,8 @@ with gr.Blocks(title=i18n("ViralCutter WebUI"), theme=gr.themes.Default(primary_
                         config_status_output = gr.Textbox(label=i18n("Config Status"), value="", interactive=False, lines=1)
 
                     with gr.Row():
-                        open_github_token_btn = gr.Button(i18n("Open GitHub Token Page"), size="sm", scale=0, min_width=180)
+                        start_copilot_oauth_btn = gr.Button(i18n("Start Copilot OAuth Login"), size="sm", scale=0, min_width=180)
+                        finish_copilot_oauth_btn = gr.Button(i18n("Finish Copilot OAuth Login"), size="sm", scale=0, min_width=180)
                         login_gh_cli_btn = gr.Button(i18n("Login with GitHub CLI"), size="sm", scale=0, min_width=180)
                         import_gh_cli_btn = gr.Button(i18n("Import Token from GitHub CLI"), size="sm", scale=0, min_width=220)
 
@@ -656,7 +827,7 @@ with gr.Blocks(title=i18n("ViralCutter WebUI"), theme=gr.themes.Default(primary_
                             new_chunk = 70000
                         elif backend == "copilot":
                             new_choices = COPILOT_MODELS
-                            new_val = COPILOT_MODELS[0]
+                            new_val = DEFAULT_COPILOT_MODEL
                             new_chunk = 10000
                         elif backend == "local":
                             models = get_local_models()
@@ -680,10 +851,15 @@ with gr.Blocks(title=i18n("ViralCutter WebUI"), theme=gr.themes.Default(primary_
 
                     refresh_models_btn.click(refresh_local_models, outputs=ai_model_input)
                     save_config_btn.click(save_api_config, inputs=[ai_backend_input, api_key_input, ai_model_input, chunk_size_input], outputs=[config_status_output])
-                    open_github_token_btn.click(
-                        open_github_token_page,
-                        outputs=[config_status_output],
-                        js="() => { window.open('https://github.com/settings/tokens/new', '_blank', 'noopener,noreferrer'); return []; }"
+                    start_copilot_oauth_btn.click(
+                        start_copilot_oauth_login,
+                        inputs=[api_key_input],
+                        outputs=[api_key_input, config_status_output],
+                    )
+                    finish_copilot_oauth_btn.click(
+                        finish_copilot_oauth_login,
+                        inputs=[api_key_input],
+                        outputs=[api_key_input, config_status_output],
                     )
                     login_gh_cli_btn.click(start_github_cli_login, outputs=[config_status_output])
                     import_gh_cli_btn.click(import_github_cli_token, outputs=[config_status_output])

@@ -30,3 +30,6 @@ models/
 .ipynb_checkpoints/
 *.tmp
 *.temp
+
+openspec/
+.github/
