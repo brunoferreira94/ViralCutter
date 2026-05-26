@@ -1,3 +1,4 @@
+version: "3.8"
 name: viralcutter
 
 services:
@@ -63,7 +64,13 @@ services:
       - PYTHONUNBUFFERED=1
       - LANG=pt_BR.UTF-8
       - LC_ALL=pt_BR.UTF-8
-    # GPU config moved to docker-compose.gpu.yml to avoid validation errors
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
 
   cli-gpu:
     build:
@@ -83,4 +90,10 @@ services:
       - PYTHONUNBUFFERED=1
       - LANG=pt_BR.UTF-8
       - LC_ALL=pt_BR.UTF-8
-    # GPU config moved to docker-compose.gpu.yml to avoid validation errors
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]

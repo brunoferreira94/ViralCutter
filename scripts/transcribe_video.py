@@ -1,5 +1,6 @@
 import os
 import sys
+import json
 import torch
 import time
 import whisperx
@@ -261,11 +262,18 @@ def transcribe(input_file, model_name='large-v3', project_folder='tmp'):
             if parsed and len(parsed) > 0:
                 start_segments = parsed
                 alignment_only = True
-                
-                # Forçar EN conforme solicitado pelo usuário para alinhamento
-                detected_language = 'en'
-                print(f"Idioma forçado para alinhamento: {detected_language}")
-                
+
+                subtitle_language = load_subtitle_source_language(output_folder)
+                if not subtitle_language:
+                    subtitle_language = guess_language_from_subtitle_segments(parsed)
+
+                if subtitle_language:
+                    detected_language = subtitle_language
+                    print(f"Idioma da legenda detectado: {detected_language}")
+                else:
+                    detected_language = 'en'
+                    print("Idioma da legenda não identificado. Usando English como fallback para alinhamento.")
+
                 print("--- MODO ALINHAMENTO RÁPIDO ATIVADO ---")
         
         result = None
