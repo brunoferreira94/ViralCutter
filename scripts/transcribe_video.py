@@ -194,6 +194,42 @@ def parse_vtt(vtt_path):
         return None
     return segments
 
+def load_subtitle_source_language(output_folder):
+    """Load subtitle source language metadata if available."""
+    meta_path = os.path.join(output_folder, 'input.subtitle_source.json')
+    if not os.path.exists(meta_path):
+        return None
+    try:
+        with open(meta_path, 'r', encoding='utf-8') as f:
+            meta = json.load(f)
+        language = meta.get('source_language')
+        return language if isinstance(language, str) and language.strip() else None
+    except Exception:
+        return None
+
+
+def guess_language_from_subtitle_segments(segments):
+    """Try to infer source subtitle language from subtitle text."""
+    if not segments:
+        return None
+
+    text = ' '.join(str(item.get('text', '')) for item in segments)
+    text = text.lower()
+
+    # Simple heuristic for Portuguese/English
+    portuguese_markers = [r'\bque\b', r'\bnao\b', r'\bnão\b', r'\bporra\b', r'\bcara\b', r'\bta\b', r'\btá\b']
+    english_markers = [r'\bthe\b', r'\band\b', r'\byou\b', r'\bthat\b', r'\bthis\b', r'\bis\b', r'\bare\b']
+
+    for marker in portuguese_markers:
+        if re.search(marker, text):
+            return 'pt'
+    for marker in english_markers:
+        if re.search(marker, text):
+            return 'en'
+
+    return None
+
+
 def transcribe(input_file, model_name='large-v3', project_folder='tmp'):
     print(i18n(f"Iniciando transcrição de {input_file}..."))
     
